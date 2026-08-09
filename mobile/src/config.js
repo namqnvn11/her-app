@@ -8,9 +8,13 @@
 
 import { Platform } from "react-native";
 
-// Chạy trên web (trình duyệt cùng máy với backend) → localhost là đúng.
-// Chạy trên điện thoại (Expo Go) → phải dùng IP LAN ở dưới.
+// Backend đã deploy trên Render — bản web build production (Vercel) dùng URL này.
+const PROD_API_URL = "https://her-app-backend-znla.onrender.com/api";
+
+// - Web dev trên máy (npx expo start --web): localhost.
+// - Web build thật (Vercel): backend Render.
+// - Điện thoại (Expo Go): IP LAN của máy dev — đổi theo Wi-Fi.
 export const API_BASE_URL =
   Platform.OS === "web"
-    ? "http://localhost:4000/api"
+    ? (__DEV__ ? "http://localhost:4000/api" : PROD_API_URL)
     : "http://192.168.100.82:4000/api";
