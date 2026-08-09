@@ -1,0 +1,21 @@
+<svg viewBox="0 0 1000 1000" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <style>
+      .bg { fill: #F5F1EA; }
+      .ring { fill: none; stroke: #9C8A6B; stroke-width: 22; }
+      .letters { fill: #1C1B19; font-family: 'Arial', 'Helvetica', sans-serif; font-weight: 800; }
+      .tagline { fill: #9C8A6B; font-family: 'Arial', 'Helvetica', sans-serif; font-weight: 600; letter-spacing: 14px; }
+    </style>
+  </defs>
+
+  <rect class="bg" x="0" y="0" width="1000" height="1000" rx="48"/>
+
+  <!-- Ring -->
+  <circle class="ring" cx="500" cy="470" r="270"/>
+
+  <!-- HER wordmark as plain text — avoids hand-drawn path distortion -->
+  <text class="letters" x="500" y="540" font-size="205" text-anchor="middle">HER</text>
+
+  <!-- Tagline -->
+  <text class="tagline" x="500" y="830" font-size="26" text-anchor="middle">PILATES &#183; GYM &#183; YOGA</text>
+</svg>

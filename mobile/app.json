@@ -1,0 +1,32 @@
+{
+  "expo": {
+    "name": "HER Pilates Gym Yoga",
+    "slug": "her-app",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#F3EEE3"
+    },
+    "assetBundlePatterns": ["**/*"],
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#F3EEE3"
+      },
+      "edgeToEdgeEnabled": true,
+      "package": "com.her.gymapp"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.her.gymapp"
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    }
+  }
+}

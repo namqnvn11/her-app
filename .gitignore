@@ -1,0 +1,19 @@
+# Dependencies
+node_modules/
+
+# Cấu hình local chứa bí mật (JWT_SECRET, chuỗi kết nối DB) — KHÔNG commit
+backend/.env
+
+# Expo / Metro
+mobile/.expo/
+mobile/dist/
+mobile/web-build/
+
+docs-her/
+.claude/
+CLAUDE.md
+Bao cao du an HER.docx
+her_app_ky_thuat.md
+
+# macOS
+.DS_Store
