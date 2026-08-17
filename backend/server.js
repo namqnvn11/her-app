@@ -15,6 +15,11 @@ const bookingsRoutes = require("./src/routes/bookings.routes");
 const managementRoutes = require("./src/routes/management.routes");
 const scheduleRoutes = require("./src/routes/schedule.routes");
 const accountsRoutes = require("./src/routes/accounts.routes");
+const packagesRoutes = require("./src/routes/packages.routes");
+const payrollRoutes = require("./src/routes/payroll.routes");
+const dashboardRoutes = require("./src/routes/dashboard.routes");
+const disciplinesRoutes = require("./src/routes/disciplines.routes");
+const autoScheduleRoutes = require("./src/routes/autoSchedule.routes");
 
 const app = express();
 app.use(cors());
@@ -31,6 +36,11 @@ app.use("/api/bookings", bookingsRoutes);
 app.use("/api/management", managementRoutes);
 app.use("/api/schedule", scheduleRoutes);
 app.use("/api/accounts", accountsRoutes);
+app.use("/api/packages", packagesRoutes);
+app.use("/api/payroll", payrollRoutes);
+app.use("/api/dashboard", dashboardRoutes);
+app.use("/api/disciplines", disciplinesRoutes);
+app.use("/api/auto-schedule", autoScheduleRoutes);
 
 app.use((req, res) => res.status(404).json({ error: "Không tìm thấy đường dẫn API" }));
 
@@ -98,8 +108,14 @@ connectDB()
       );
       process.exit(1);
     }
+    // Unique (ruleId, dateKey) là KHOÁ chống lịch-tự-động sinh đúp — phải tồn tại thật (C3)
+    await require("./src/models/AutoScheduleLog").syncIndexes();
+    // Nạp sẵn danh mục bộ môn vào cache (her-19) — serializePackage cần bản sync
+    await require("./src/utils/disciplines").allDisciplines();
     // Job nền: tự chuyển buổi đã qua giờ thành "Đã tập" (lỗi L6)
     startCompleteSweep();
+    // Job nền: sinh lịch tự động — phủ trước 7 ngày cho các luật đang bật (her-32)
+    require("./src/utils/autoSchedule").startAutoSchedule();
     app.listen(PORT, () => console.log(`[server] Đang chạy tại http://localhost:${PORT}`));
   })
   .catch((err) => {

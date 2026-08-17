@@ -7,6 +7,8 @@ const Package = require("../models/Package");
 const { requireAuth } = require("../middleware/auth");
 const { canCustomerCancel, MIN_CANCEL_HOURS } = require("../utils/cancelRule");
 const { isTrainerLocked } = require("../utils/activeTrainers");
+const { chargeSession, packageErrorMessage } = require("../utils/packages");
+const { ptTitle } = require("../utils/serviceTypes");
 const wrap = require("../utils/asyncHandler");
 
 const router = express.Router();
@@ -41,13 +43,19 @@ router.post("/", wrap(async (req, res) => {
   if (type === "group") {
     gymClass = await GymClass.findById(classId).populate("coachId", "name");
     if (!gymClass) return res.status(404).json({ error: "Không tìm thấy lớp học" });
+    // Dữ liệu cũ chưa chạy backfill: không đoán loại gói để trừ bừa
+    if (!gymClass.serviceType) {
+      return res.status(400).json({ error: "Lớp này chưa được gán bộ môn — liên hệ lễ tân cập nhật" });
+    }
     if (gymClass.startAt <= new Date()) {
       return res.status(400).json({ error: "Lớp này đã qua giờ bắt đầu, không thể đặt" });
     }
     if (await isTrainerLocked(gymClass.coachId?._id)) {
       return res.status(400).json({ error: "HLV của lớp này tạm ngưng hoạt động, không thể đặt" });
     }
-    const already = await Booking.findOne({ userId: req.user._id, status: "booked", classId });
+    // $ne cancelled: buổi được điểm danh SỚM (trước giờ, status completed/no_show) vẫn phải
+    // chặn đặt lại — không thì khách bị trừ buổi lần 2 (review her-10 #2)
+    const already = await Booking.findOne({ userId: req.user._id, status: { $ne: "cancelled" }, classId });
     if (already) return res.status(400).json({ error: "Bạn đã đặt lịch này rồi" });
   } else {
     slot = await PTSlot.findById(slotId).populate("trainerId", "name");
@@ -55,15 +63,21 @@ router.post("/", wrap(async (req, res) => {
     if (slot.startAt <= new Date()) {
       return res.status(400).json({ error: "Khung giờ này đã qua, không thể đặt" });
     }
-    if (slot.isBooked) return res.status(400).json({ error: "Khung giờ này vừa có người đặt" });
+    // PT nhóm (mục 6): kín khi bookedCount đạt capacity (capacity 1 = PT 1:1 như cũ)
+    if (slot.bookedCount >= slot.capacity) {
+      return res.status(400).json({ error: "Khung giờ này đã kín chỗ" });
+    }
     if (await isTrainerLocked(slot.trainerId?._id)) {
       return res.status(400).json({ error: "HLV này tạm ngưng hoạt động, không thể đặt" });
     }
+    // $ne cancelled: kể cả buổi bị điểm danh SỚM — không cho đặt lại cùng khung (her-10 #2)
+    const alreadyPt = await Booking.findOne({ userId: req.user._id, status: { $ne: "cancelled" }, slotId });
+    if (alreadyPt) return res.status(400).json({ error: "Bạn đã đặt lịch này rồi" });
   }
   const target = gymClass || slot;
   const overlapping = await Booking.findOne({
     userId: req.user._id,
-    status: "booked",
+    status: { $ne: "cancelled" }, // gồm cả buổi điểm danh sớm (review her-10 #2)
     startAt: { $lt: target.endAt },
     endAt: { $gt: target.startAt },
   });
@@ -71,27 +85,16 @@ router.post("/", wrap(async (req, res) => {
     return res.status(400).json({ error: `Bạn đã có lịch "${overlapping.title}" trùng giờ này` });
   }
 
-  // ---- Bước 1: trừ 1 buổi atomic — gói phải còn hạn đến tận ngày buổi tập diễn ra ----
-  const pkg = await Package.findOneAndUpdate(
-    {
-      userId: req.user._id,
-      expiresAt: { $gte: target.startAt },
-      $expr: { $lt: ["$usedSessions", "$totalSessions"] },
-    },
-    { $inc: { usedSessions: 1 } },
-    { sort: { expiresAt: -1 }, new: true }
-  );
+  // ---- Bước 1: trừ 1 buổi atomic — H7: gói phải ĐÚNG LOẠI hình + còn hạn tới ngày tập ----
+  // Lớp group trừ gói theo bộ môn của lớp; buổi PT trừ gói loại "pt" (quyết định 12/08/2026).
+  // Thứ tự nhiều gói (Q4): gói có hạn gần hết trước, gói không thời hạn sau cùng.
+  // Gói đang bảo lưu bị loại; gói còn nợ tiền vẫn dùng bình thường (Q10/Q11 16/08).
+  const requiredType = type === "group" ? gymClass.serviceType : "pt";
+  const pkg = await chargeSession(req.user._id, requiredType, target.startAt);
   if (!pkg) {
-    // Phân biệt lý do để báo đúng cho khách (chỉ đọc, không cần atomic)
-    const validNow = await Package.findOne({ userId: req.user._id, expiresAt: { $gte: new Date() } });
-    if (!validNow) return res.status(400).json({ error: "Bạn chưa có gói tập còn hiệu lực" });
-    const coversDate = await Package.findOne({ userId: req.user._id, expiresAt: { $gte: target.startAt } });
-    if (!coversDate) {
-      return res.status(400).json({
-        error: "Gói tập của bạn hết hạn trước ngày diễn ra buổi này — vui lòng gia hạn hoặc chọn buổi sớm hơn",
-      });
-    }
-    return res.status(400).json({ error: "Gói tập đã hết buổi, vui lòng gia hạn" });
+    return res
+      .status(400)
+      .json({ error: await packageErrorMessage(req.user._id, requiredType, target.startAt) });
   }
 
   // Hoàn bù buổi đã trừ — chạy đúng 1 lần khi THÀNH CÔNG; DB lỗi thì thử lại 1 lần rồi
@@ -153,6 +156,14 @@ router.post("/", wrap(async (req, res) => {
           endAt: gymClass.endAt,
           packageId: pkg._id,
         });
+        // Tự lành race hiếm (her-09 #1): quầy đổi HLV đúng giữa lúc claim và create —
+        // updateMany của PATCH chạy khi booking chưa tồn tại. Đọc lại HLV hiện tại của lớp,
+        // lệch thì sửa booking theo giá trị mới nhất.
+        const freshClass = await GymClass.findById(classId).select("coachId");
+        if (freshClass && !freshClass.coachId.equals(booking.trainerId)) {
+          await Booking.updateOne({ _id: booking._id }, { $set: { trainerId: freshClass.coachId } });
+          booking.trainerId = freshClass.coachId;
+        }
       } catch (err) {
         await GymClass.updateOne({ _id: classId }, { $inc: { bookedCount: -1 } }).catch((e) =>
           console.error("[seat-release-failed] lớp có thể kẹt chỗ ảo, cần kiểm tra tay:", {
@@ -167,19 +178,22 @@ router.post("/", wrap(async (req, res) => {
         throw err;
       }
     } else {
+      // Giành 1 chỗ atomic (L2/C3): điều kiện còn chỗ ngay TRONG lệnh ghi — 2 người bấm
+      // cùng lúc chỗ cuối thì chỉ 1 lệnh khớp điều kiện; kèm snapshot giờ/HLV như lớp nhóm
       const claimed = await PTSlot.findOneAndUpdate(
         {
           _id: slotId,
-          isBooked: false,
           startAt: slot.startAt,
+          endAt: slot.endAt, // đối xứng với nhánh group (review her-11 N1)
           trainerId: slot.trainerId._id,
+          $expr: { $lt: ["$bookedCount", "$capacity"] },
         },
-        { $set: { isBooked: true } },
+        { $inc: { bookedCount: 1 } },
         { new: true }
       );
       if (!claimed) {
         await refundSession();
-        return res.status(400).json({ error: "Khung giờ này vừa có người đặt" });
+        return res.status(400).json({ error: "Khung giờ này vừa kín chỗ" });
       }
 
       try {
@@ -188,13 +202,22 @@ router.post("/", wrap(async (req, res) => {
           type: "pt",
           slotId: slot._id,
           trainerId: slot.trainerId._id,
-          title: `1:1 PT — ${slot.trainerId.name}`,
+          title: ptTitle(claimed.capacity, slot.trainerId.name),
           startAt: slot.startAt,
           endAt: slot.endAt,
           packageId: pkg._id,
         });
+        // Tự lành race hiếm (her-09 #1): quầy đổi HLV đúng giữa lúc claim và create
+        const freshSlot = await PTSlot.findById(slotId).populate("trainerId", "name");
+        if (freshSlot && !freshSlot.trainerId._id.equals(booking.trainerId)) {
+          await Booking.updateOne(
+            { _id: booking._id },
+            { $set: { trainerId: freshSlot.trainerId._id, title: ptTitle(freshSlot.capacity, freshSlot.trainerId.name) } }
+          );
+          booking.trainerId = freshSlot.trainerId._id;
+        }
       } catch (err) {
-        await PTSlot.updateOne({ _id: slotId }, { $set: { isBooked: false } }).catch((e) =>
+        await PTSlot.updateOne({ _id: slotId, bookedCount: { $gt: 0 } }, { $inc: { bookedCount: -1 } }).catch((e) =>
           console.error("[slot-release-failed] PT slot có thể kẹt 'đã đặt', cần kiểm tra tay:", {
             slotId: String(slotId),
             error: e.message,
@@ -273,7 +296,10 @@ router.delete("/:id", wrap(async (req, res) => {
         { $inc: { bookedCount: -1 } }
       );
     } else if (booking.type === "pt" && booking.slotId) {
-      await PTSlot.updateOne({ _id: booking.slotId }, { $set: { isBooked: false } });
+      await PTSlot.updateOne(
+        { _id: booking.slotId, bookedCount: { $gt: 0 } },
+        { $inc: { bookedCount: -1 } }
+      );
     }
 
     // Hoàn buổi về ĐÚNG gói đã bị trừ lúc đặt (lỗi L3). Booking cũ chưa có packageId thì
@@ -284,9 +310,12 @@ router.delete("/:id", wrap(async (req, res) => {
         { $inc: { usedSessions: -1 } }
       );
     } else {
+      // Booking cũ (trước her-05) không có packageId — fallback như cũ nhưng ưu tiên gói
+      // đúng loại với booking (group không suy được bộ môn từ booking cũ -> giữ hành vi cũ)
+      const typeFilter = booking.type === "pt" ? { serviceType: "pt" } : {};
       const pkg =
-        (await Package.findOne({ userId: booking.userId, expiresAt: { $gte: new Date() } }).sort({ expiresAt: -1 })) ||
-        (await Package.findOne({ userId: booking.userId }).sort({ expiresAt: -1 }));
+        (await Package.findOne({ userId: booking.userId, ...typeFilter, expiresAt: { $gte: new Date() } }).sort({ expiresAt: -1 })) ||
+        (await Package.findOne({ userId: booking.userId, ...typeFilter }).sort({ expiresAt: -1 }));
       if (pkg) {
         await Package.updateOne({ _id: pkg._id, usedSessions: { $gt: 0 } }, { $inc: { usedSessions: -1 } });
       }

@@ -23,6 +23,7 @@ router.get("/", wrap(async (req, res) => {
     classes: classes.map((c) => ({
       id: c._id,
       name: c.name,
+      serviceType: c.serviceType,
       coach: c.coachId?.name || "",
       startAt: c.startAt,
       endAt: c.endAt,

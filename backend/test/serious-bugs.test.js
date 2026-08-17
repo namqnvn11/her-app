@@ -52,13 +52,14 @@ async function login(phone, password = "123456") {
 const hoursFromNow = (h) => new Date(Date.now() + h * 3600 * 1000);
 
 // Tiện ích: lễ tân tạo 1 lớp group ở giờ xa (không đụng lịch seed)
-async function createClass(staffToken, { hour, capacity = 5, name = "Lop test" }) {
+async function createClass(staffToken, { hour, capacity = 5, name = "Lop test", serviceType = "pilates" }) {
   const trainers = await call(S, "/schedule/trainers", { token: staffToken });
   const r = await call(S, "/schedule/classes", {
     method: "POST",
     token: staffToken,
     body: {
       name,
+      serviceType,
       coachId: trainers.data.trainers[0].id,
       startAt: hoursFromNow(hour),
       endAt: hoursFromNow(hour + 1),
@@ -85,6 +86,9 @@ before(async () => {
   });
   await waitHealthy(S);
   await mongoose.connect(URI);
+  // her-19: suite này test các bất biến CŨ với coach bất kỳ — gỡ ràng buộc chuyên môn của
+  // seed (specialties rỗng = hồ sơ cũ, được phép dạy mọi lớp); luật chuyên môn có test riêng.
+  await mongoose.connection.db.collection("trainers").updateMany({}, { $set: { specialties: [] } });
 });
 
 after(async () => {
@@ -180,6 +184,13 @@ test("L2: 2 khách giành 1 PT slot cùng lúc -> đúng 1 người được", a
   });
   const slotId = slotRes.data.slot._id;
 
+  // Thảo Vy chưa có gói PT (H7) — tạo để 2 bên đều đủ điều kiện, race mới thật sự công bằng
+  await Package.create({
+    userId: (await mongoose.connection.db.collection("users").findOne({ phone: "0912345678" }))._id,
+    name: "PT test race", serviceType: "pt", price: 1, totalSessions: 5,
+    activatedAt: new Date(), expiresAt: hoursFromNow(24 * 30),
+  });
+
   const [r1, r2] = await Promise.all([
     call(S, "/bookings", { method: "POST", token: c1.token, body: { type: "pt", slotId } }),
     call(S, "/bookings", { method: "POST", token: c2.token, body: { type: "pt", slotId } }),
@@ -187,7 +198,7 @@ test("L2: 2 khách giành 1 PT slot cùng lúc -> đúng 1 người được", a
   assert.deepEqual([r1.status, r2.status].sort(), [201, 400]);
 
   const slot = await PTSlot.findById(slotId);
-  assert.equal(slot.isBooked, true);
+  assert.equal(slot.bookedCount, 1, "slot 1:1 phải kín sau khi có người thắng");
   assert.equal(await Booking.countDocuments({ slotId, status: "booked" }), 1);
 });
 
@@ -217,11 +228,11 @@ test("L2: bấm đúp — 8 request giống hệt song song -> 1 booking, trừ 
 test("L2: gói còn đúng 1 buổi, đặt 2 lớp khác nhau song song -> chỉ 1 thành công, không trừ quá", async () => {
   const staff = await login("0900000000");
   const c2 = await login("0912345678");
-  const clsA = await createClass(staff.token, { hour: 220, name: "Race buoi cuoi A" });
-  const clsB = await createClass(staff.token, { hour: 225, name: "Race buoi cuoi B" });
+  const clsA = await createClass(staff.token, { hour: 220, name: "Race buoi cuoi A", serviceType: "yoga" });
+  const clsB = await createClass(staff.token, { hour: 225, name: "Race buoi cuoi B", serviceType: "yoga" });
 
   // Ép gói của Thảo Vy còn đúng 1 buổi
-  const pkg = await Package.findOne({ userId: (await mongoose.connection.db.collection("users").findOne({ phone: "0912345678" }))._id });
+  const pkg = await Package.findOne({ userId: (await mongoose.connection.db.collection("users").findOne({ phone: "0912345678" }))._id, serviceType: "yoga" });
   await Package.updateOne({ _id: pkg._id }, { $set: { usedSessions: pkg.totalSessions - 1 } });
 
   const [r1, r2] = await Promise.all([
@@ -242,16 +253,17 @@ test("L3: khách có 2 gói — hủy hoàn về ĐÚNG gói đã trừ, gói ki
   const cls = await createClass(staff.token, { hour: 230, name: "Refund dung goi" });
 
   const userId = (await mongoose.connection.db.collection("users").findOne({ phone: "0909090909" }))._id;
-  const pkgOld = await Package.findOne({ userId }); // gói seed (hạn +60 ngày)
-  // Gói mới hạn xa hơn -> hệ thống sẽ trừ gói này khi đặt
+  const pkgOld = await Package.findOne({ userId, serviceType: "pilates" }); // gói seed (hạn +60 ngày)
+  // Q4 (12/08): gói HẠN GẦN trừ trước -> tạo gói hạn GẦN hơn gói seed để hệ thống trừ gói này
   const pkgNew = await Package.create({
     userId,
-    name: "Goi moi han xa",
+    name: "Goi moi han gan",
+    serviceType: "pilates",
     price: 1000000,
     totalSessions: 10,
     usedSessions: 0,
     activatedAt: new Date(),
-    expiresAt: hoursFromNow(24 * 90),
+    expiresAt: hoursFromNow(24 * 20),
   });
   const oldUsedBefore = pkgOld.usedSessions;
 
@@ -349,24 +361,25 @@ test("L3: hủy PT booking — slot mở lại cho người khác, buổi hoàn 
   assert.equal(booked.status, 201, JSON.stringify(booked.data));
   const bookingDoc = await Booking.findById(booked.data.booking.id);
   const usedAfterBook = (await Package.findById(bookingDoc.packageId)).usedSessions;
-  assert.equal((await PTSlot.findById(slotId)).isBooked, true);
+  assert.equal((await PTSlot.findById(slotId)).bookedCount, 1);
 
   const cancel = await call(S, `/bookings/${booked.data.booking.id}`, { method: "DELETE", token: c1.token });
   assert.equal(cancel.status, 200);
-  assert.equal((await PTSlot.findById(slotId)).isBooked, false, "slot phải mở lại cho người khác đặt");
+  assert.equal((await PTSlot.findById(slotId)).bookedCount, 0, "slot phải mở lại cho người khác đặt");
   assert.equal((await Package.findById(bookingDoc.packageId)).usedSessions, usedAfterBook - 1);
 });
 
 test("L2: mọi gói đều hết hạn -> không đặt được, báo đúng lý do", async () => {
   const staff = await login("0900000000");
   const c2 = await login("0912345678");
-  const cls = await createClass(staff.token, { hour: 258, name: "Het han goi" });
+  const cls = await createClass(staff.token, { hour: 258, name: "Het han goi", serviceType: "yoga" });
   const userId = (await mongoose.connection.db.collection("users").findOne({ phone: "0912345678" }))._id;
 
   await Package.updateMany({ userId }, { $set: { expiresAt: hoursFromNow(-24) } });
   const r = await call(S, "/bookings", { method: "POST", token: c2.token, body: { type: "group", classId: cls._id } });
   assert.equal(r.status, 400);
-  assert.match(r.data.error, /chưa có gói tập còn hiệu lực/);
+  // Message mới theo H7 nêu rõ loại gói: "Gói Yoga của bạn đã hết hạn, vui lòng gia hạn"
+  assert.match(r.data.error, /đã hết hạn/);
   await Package.updateMany({ userId }, { $set: { expiresAt: hoursFromNow(24 * 25) } }); // trả lại hạn cho test sau
 });
 
@@ -378,6 +391,7 @@ test("Review T4: gọi thẳng API đặt lớp/slot đã qua giờ -> 400, khô
   const trainerDoc = await mongoose.connection.db.collection("trainers").findOne({});
   const pastClass = await GymClass.create({
     name: "Lop da qua",
+    serviceType: "pilates",
     coachId: trainerDoc._id,
     startAt: hoursFromNow(-5),
     endAt: hoursFromNow(-4),
@@ -396,11 +410,11 @@ test("Review T4: gọi thẳng API đặt lớp/slot đã qua giờ -> 400, khô
 test("Hồi quy: đặt rồi hủy tuần tự vẫn chuẩn — số buổi và chỗ quay về như cũ", async () => {
   const staff = await login("0900000000");
   const c2 = await login("0912345678");
-  const cls = await createClass(staff.token, { hour: 250, name: "Regression flow" });
+  const cls = await createClass(staff.token, { hour: 250, name: "Regression flow", serviceType: "yoga" });
 
   // Nới gói của Thảo Vy lại (các test trước đã ép hết buổi)
   const userId = (await mongoose.connection.db.collection("users").findOne({ phone: "0912345678" }))._id;
-  await Package.updateOne({ userId }, { $set: { usedSessions: 1 } });
+  await Package.updateOne({ userId, serviceType: "yoga" }, { $set: { usedSessions: 1 } });
 
   const before = (await call(S, "/me/package", { token: c2.token })).data.package.usedSessions;
   const booked = await call(S, "/bookings", { method: "POST", token: c2.token, body: { type: "group", classId: cls._id } });

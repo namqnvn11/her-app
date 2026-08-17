@@ -5,6 +5,7 @@ const Trainer = require("../models/Trainer");
 const { requireAuth, requireManagement } = require("../middleware/auth");
 const { isValidPhone, isValidPassword, MIN_PASSWORD_LENGTH } = require("../utils/validators");
 const wrap = require("../utils/asyncHandler");
+const { isValidClassType, labelOf } = require("../utils/disciplines");
 
 const router = express.Router();
 // Phân quyền 3 tầng:
@@ -36,10 +37,10 @@ router.get("/", wrap(async (req, res) => {
   res.json({ accounts: users.map((u) => u.toPublicJSON()) });
 }));
 
-// POST /api/accounts  { name, phone, password, role, specialty? }
+// POST /api/accounts  { name, phone, password, role, specialties? } — chuyên môn HLV CHỌN từ danh mục (her-19)
 // role="trainer" -> tự tạo kèm hồ sơ Trainer (để xuất hiện trong danh sách xếp lịch/đặt PT).
 router.post("/", wrap(async (req, res) => {
-  const { name, phone, password, role, specialty } = req.body;
+  const { name, phone, password, role, specialty, specialties } = req.body;
   if (!name || !phone || !password || !role) {
     return res.status(400).json({ error: "Thiếu thông tin bắt buộc" });
   }
@@ -58,7 +59,21 @@ router.post("/", wrap(async (req, res) => {
   const passwordHash = await bcrypt.hash(password, 10);
   let trainerId = null;
   if (role === "trainer") {
-    const trainer = await Trainer.create({ name, specialty: specialty || "" });
+    // Chuyên môn phải là các KEY có trong danh mục bộ môn (không nhập tay — her-19).
+    // BẮT BUỘC >=1 (review V2): không có đường tạo HLV "wildcard" mới qua API thẳng.
+    const keys = [...new Set(Array.isArray(specialties) ? specialties : [])];
+    if (keys.length === 0) {
+      return res.status(400).json({ error: "Chọn ít nhất 1 chuyên môn cho HLV (từ danh mục bộ môn)" });
+    }
+    for (const k of keys) {
+      if (typeof k !== "string" || !(await isValidClassType(k))) {
+        return res.status(400).json({ error: "Chuyên môn không hợp lệ — chọn từ danh mục bộ môn" });
+      }
+    }
+    const specialtyLabel = keys.length
+      ? (await Promise.all(keys.map((k) => labelOf(k)))).join(" · ")
+      : (typeof specialty === "string" ? specialty : "");
+    const trainer = await Trainer.create({ name, specialty: specialtyLabel, specialties: keys });
     trainerId = trainer._id;
   }
 
@@ -98,7 +113,11 @@ router.patch("/:id", wrap(async (req, res) => {
   }
   if (name !== undefined) target.name = name;
   if (isActive !== undefined) target.isActive = isActive;
-  if (password) target.passwordHash = await bcrypt.hash(password, 10);
+  if (password) {
+    target.passwordHash = await bcrypt.hash(password, 10);
+    // Quầy cấp lại mật khẩu -> đá mọi phiên cũ của tài khoản (her-14 A2 — kịch bản mất máy)
+    target.passwordChangedAt = new Date();
+  }
   await target.save();
 
   // Đổi tên tài khoản HLV thì đồng bộ luôn hồ sơ Trainer — tên này hiện ở lịch lớp,

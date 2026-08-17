@@ -3,6 +3,7 @@ const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const User = require("../models/User");
 const { MIN_CANCEL_HOURS } = require("../utils/cancelRule");
+const { ATTENDANCE_OPEN_BEFORE_MINUTES } = require("../utils/attendanceRule");
 const { isValidPhone, isValidPassword, MIN_PASSWORD_LENGTH } = require("../utils/validators");
 const { blockedMinutes, recordFailure, resetAttempts } = require("../utils/loginRateLimit");
 const wrap = require("../utils/asyncHandler");
@@ -18,7 +19,7 @@ function signToken(user) {
 // Cấu hình app cần biết (vd số giờ tối thiểu để tự hủy lịch) — gửi kèm khi login và /me
 // để mobile không phải ghi cứng con số nào.
 function publicConfig() {
-  return { minCancelHours: MIN_CANCEL_HOURS };
+  return { minCancelHours: MIN_CANCEL_HOURS, attendanceOpenBeforeMinutes: ATTENDANCE_OPEN_BEFORE_MINUTES, minPasswordLength: MIN_PASSWORD_LENGTH };
 }
 
 // POST /api/auth/login  { phone, password }

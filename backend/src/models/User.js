@@ -17,6 +17,9 @@ const userSchema = new mongoose.Schema(
     // null nghĩa là tài khoản gốc (seed) hoặc khách tự đăng ký.
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
     isActive: { type: Boolean, default: true },
+    // Đổi/cấp lại mật khẩu -> mọi token cấp TRƯỚC thời điểm này bị vô hiệu (review her-14 A2:
+    // kịch bản mất máy — phiên của kẻ cầm máy phải chết khi chủ tài khoản đổi mật khẩu)
+    passwordChangedAt: { type: Date, default: null },
   },
   { timestamps: true }
 );

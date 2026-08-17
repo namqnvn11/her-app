@@ -17,6 +17,10 @@ const bookingSchema = new mongoose.Schema(
     },
     cancelledAt: { type: Date, default: null },
     cancelledBy: { type: String, enum: ["customer", "staff", null], default: null },
+    // Điểm danh (her-10, mục 5): null = CHƯA điểm danh thật. Buổi bị sweep tự hoàn tất
+    // vẫn null — hoa hồng HLV (mục 7) chỉ tính buổi có attendanceAt (khách đến thật).
+    attendanceAt: { type: Date, default: null },
+    attendanceBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
     // Gói tập đã bị trừ buổi lúc đặt — hủy lịch hoàn buổi về ĐÚNG gói này,
     // không đoán "gói mới nhất" (null = booking cũ trước khi có trường này, hoặc seed lịch sử)
     packageId: { type: mongoose.Schema.Types.ObjectId, ref: "Package", default: null },

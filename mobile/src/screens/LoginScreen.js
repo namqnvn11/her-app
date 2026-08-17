@@ -30,9 +30,9 @@ export default function LoginScreen() {
       style={styles.wrap}
       behavior={Platform.OS === "ios" ? "padding" : undefined}
     >
-      <View style={{ alignItems: "center", marginBottom: 34 }}>
-        <Svg width={86} height={86} viewBox="0 0 1000 1000">
-          <Circle cx="500" cy="500" r="430" fill="none" stroke={COLORS.beigeDark} strokeWidth="55" />
+      <View style={{ alignItems: "center", marginBottom: 38 }}>
+        <Svg width={92} height={92} viewBox="0 0 1000 1000">
+          <Circle cx="500" cy="500" r="430" fill="none" stroke={COLORS.primary} strokeWidth="55" />
           <SvgText x="500" y="600" textAnchor="middle" fontSize="320" fontWeight="800" fill={COLORS.ink}>
             HER
           </SvgText>
@@ -40,58 +40,50 @@ export default function LoginScreen() {
         <Text style={styles.tagline}>PILATES · GYM · YOGA</Text>
       </View>
 
-      <Text style={styles.label}>Số điện thoại</Text>
+      <Text style={styles.label}>SỐ ĐIỆN THOẠI</Text>
       <TextInput
         value={phone}
         onChangeText={setPhone}
         placeholder="VD: 0909090909"
-        placeholderTextColor={COLORS.inkSoft}
+        placeholderTextColor={COLORS.tabInactive}
         autoCapitalize="none"
         keyboardType="phone-pad"
         style={styles.input}
       />
 
-      <Text style={styles.label}>Mật khẩu</Text>
+      <Text style={styles.label}>MẬT KHẨU</Text>
       <TextInput
         value={password}
         onChangeText={setPassword}
         placeholder="••••••••"
-        placeholderTextColor={COLORS.inkSoft}
+        placeholderTextColor={COLORS.tabInactive}
         secureTextEntry
         style={styles.input}
       />
 
       {!!error && <Text style={styles.error}>{error}</Text>}
 
-      <AppButton onPress={handleLogin} disabled={submitting} style={{ marginTop: 8 }}>
+      <AppButton onPress={handleLogin} disabled={submitting} style={{ marginTop: 14 }}>
         {submitting ? "Đang đăng nhập..." : "Đăng nhập"}
       </AppButton>
 
-      <Text style={styles.forgot}>
-        Tài khoản demo — mật khẩu chung: 123456{"\n"}
-        Học viên: 0909090909{"\n"}
-        HLV: 0911111111{"\n"}
-        Lễ tân: 0900000000{"\n"}
-        Admin: 0999999999
-      </Text>
+      <Text style={styles.forgot}>Quên mật khẩu? Liên hệ quầy lễ tân</Text>
     </KeyboardAvoidingView>
   );
 }
 
 const styles = StyleSheet.create({
-  wrap: { flex: 1, backgroundColor: COLORS.bg, justifyContent: "center", paddingHorizontal: 28 },
-  tagline: { marginTop: 10, fontSize: 12, letterSpacing: 3, color: COLORS.beigeDark, fontWeight: "700" },
-  label: { fontSize: 12, color: COLORS.inkSoft, fontWeight: "700", marginBottom: 6 },
+  wrap: { flex: 1, backgroundColor: COLORS.bg, justifyContent: "center", paddingHorizontal: 32 },
+  tagline: { marginTop: 12, fontSize: 12, letterSpacing: 3, color: COLORS.primary, fontWeight: "700" },
+  label: { fontSize: 10.5, color: COLORS.inkSoft, fontWeight: "700", letterSpacing: 1.4, marginTop: 18 },
+  // Ô nhập kiểu gạch chân theo bản thiết kế — không đóng khung
   input: {
-    borderWidth: 1.5,
-    borderColor: COLORS.line,
-    borderRadius: 12,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    marginBottom: 16,
-    fontSize: 14,
+    borderBottomWidth: 1.5,
+    borderBottomColor: COLORS.line,
+    paddingVertical: 9,
+    fontSize: 15.5,
     color: COLORS.ink,
   },
-  error: { color: COLORS.ink, fontSize: 12.5, marginBottom: 10, fontWeight: "700" },
-  forgot: { textAlign: "center", marginTop: 16, fontSize: 11.5, color: COLORS.inkSoft, lineHeight: 17 },
+  error: { color: COLORS.danger, fontSize: 12.5, marginTop: 12, fontWeight: "700" },
+  forgot: { textAlign: "center", marginTop: 18, fontSize: 12, color: COLORS.inkSoft },
 });

@@ -68,6 +68,9 @@ before(async () => {
   });
   await waitHealthy(S);
   await mongoose.connect(URI);
+  // her-19: suite này test các bất biến CŨ với coach bất kỳ — gỡ ràng buộc chuyên môn của
+  // seed (specialties rỗng = hồ sơ cũ, được phép dạy mọi lớp); luật chuyên môn có test riêng.
+  await mongoose.connection.db.collection("trainers").updateMany({}, { $set: { specialties: [] } });
 
   tokens.admin = (await login("0999999999")).token;
   tokens.reception = (await login("0900000000")).token;
@@ -103,17 +106,23 @@ const MATRIX = [
   { m: "DELETE", p: "/bookings/khong-id", exp: { admin: 400, reception: 400, trainer: 400, customer: 400, anon: 401 } },
 
   { m: "GET", p: "/management/bookings", exp: { admin: 200, reception: 200, trainer: 200, customer: 403, anon: 401 } },
+  // her-05: module gói tập (body rỗng/id rác -> 400 với role được phép; role khác giữ 403/401)
+  { m: "POST", p: "/packages", body: {}, exp: { admin: 400, reception: 400, trainer: 403, customer: 403, anon: 401 } },
+  { m: "GET", p: "/packages/customer/khong-id", exp: { admin: 400, reception: 400, trainer: 403, customer: 403, anon: 401 } },
+  { m: "PATCH", p: "/packages/khong-id/pay", body: {}, exp: { admin: 400, reception: 400, trainer: 403, customer: 403, anon: 401 } },
+  { m: "PATCH", p: "/packages/khong-id/pause", body: {}, exp: { admin: 400, reception: 400, trainer: 403, customer: 403, anon: 401 } },
+  { m: "PATCH", p: "/packages/khong-id/resume", body: {}, exp: { admin: 400, reception: 400, trainer: 403, customer: 403, anon: 401 } },
   { m: "GET", p: "/management/customers/khong-id/bookings", exp: { admin: 400, reception: 400, trainer: 403, customer: 403, anon: 401 } },
   { m: "GET", p: "/management/classes/khong-id/roster", exp: { admin: 400, reception: 400, trainer: 400, customer: 403, anon: 401 } },
 
   { m: "GET", p: "/schedule/trainers", exp: { admin: 200, reception: 200, trainer: 403, customer: 403, anon: 401 } },
   { m: "GET", p: "/schedule/classes", exp: { admin: 200, reception: 200, trainer: 403, customer: 403, anon: 401 } },
-  { m: "GET", p: "/schedule/pt-slots", exp: { admin: 200, reception: 200, trainer: 403, customer: 403, anon: 401 } },
+  { m: "GET", p: "/schedule/pt-slots", exp: { admin: 200, reception: 200, trainer: 200, customer: 403, anon: 401 } }, // her-11: HLV thấy khung CỦA MÌNH
   { m: "POST", p: "/schedule/classes", body: {}, exp: { admin: 400, reception: 400, trainer: 403, customer: 403, anon: 401 } },
   { m: "PATCH", p: "/schedule/classes/khong-id", body: {}, exp: { admin: 400, reception: 400, trainer: 403, customer: 403, anon: 401 } },
   { m: "DELETE", p: "/schedule/classes/khong-id", exp: { admin: 400, reception: 400, trainer: 403, customer: 403, anon: 401 } },
-  { m: "POST", p: "/schedule/pt-slots", body: {}, exp: { admin: 400, reception: 400, trainer: 403, customer: 403, anon: 401 } },
-  { m: "DELETE", p: "/schedule/pt-slots/khong-id", exp: { admin: 400, reception: 400, trainer: 403, customer: 403, anon: 401 } },
+  { m: "POST", p: "/schedule/pt-slots", body: {}, exp: { admin: 400, reception: 400, trainer: 400, customer: 403, anon: 401 } }, // her-11: HLV được tạo (thiếu field -> 400)
+  { m: "DELETE", p: "/schedule/pt-slots/khong-id", exp: { admin: 404, reception: 404, trainer: 404, customer: 403, anon: 401 } }, // her-11: id rác -> 404 (role gate trước)
 
   { m: "GET", p: "/accounts", exp: { admin: 200, reception: 200, trainer: 403, customer: 403, anon: 401 } },
   { m: "POST", p: "/accounts", body: { name: "x", phone: "abc", password: "matkhau6", role: "customer" }, exp: { admin: 400, reception: 400, trainer: 403, customer: 403, anon: 401 } },
@@ -195,13 +204,14 @@ test("B6: khách bị chặn hủy buổi sát giờ (403) nhưng lễ tân hủ
   assert.equal(denied.status, 403);
   assert.match(denied.data.error, /3 tiếng/);
 
-  const before = (await call("/me/package", { token: minh.token })).data.package.usedSessions;
+  const minhId = (await User.findOne({ phone: "0909090909" }))._id;
+  const before = (await Package.findOne({ userId: minhId, serviceType: "pt" })).usedSessions;
   const staffCancel = await call(`/bookings/${soon.id}`, { method: "DELETE", token: tokens.reception });
   assert.equal(staffCancel.status, 200);
   assert.equal(
-    (await call("/me/package", { token: minh.token })).data.package.usedSessions,
+    (await Package.findOne({ userId: minhId, serviceType: "pt" })).usedSessions,
     before - 1,
-    "lễ tân hủy hộ phải hoàn buổi cho khách"
+    "lễ tân hủy hộ phải hoàn buổi cho khách (về đúng gói PT — H7)"
   );
 });
 
@@ -241,7 +251,7 @@ test("B11: đặt PT trùng giờ với lớp group đã đặt -> 400 'trùng g
   // Lớp và slot cùng khung giờ xa (tránh đụng dữ liệu khác)
   const cls = await call("/schedule/classes", {
     method: "POST", token: tokens.reception,
-    body: { name: "Overlap G", coachId: trainers[0].id, startAt: hoursFromNow(260), endAt: hoursFromNow(261) },
+    body: { name: "Overlap G", serviceType: "yoga", coachId: trainers[0].id, startAt: hoursFromNow(260), endAt: hoursFromNow(261) },
   });
   const slot = await call("/schedule/pt-slots", {
     method: "POST", token: tokens.reception,
@@ -263,13 +273,13 @@ test("B12: xoá lớp/slot trống được, có khách thì bị chặn", async
 
   const freeCls = await call("/schedule/classes", {
     method: "POST", token: tokens.reception,
-    body: { name: "Xoa duoc", coachId: trainers[0].id, startAt: hoursFromNow(270), endAt: hoursFromNow(271) },
+    body: { name: "Xoa duoc", serviceType: "yoga", coachId: trainers[0].id, startAt: hoursFromNow(270), endAt: hoursFromNow(271) },
   });
   assert.equal((await call(`/schedule/classes/${freeCls.data.class._id}`, { method: "DELETE", token: tokens.reception })).status, 200);
 
   const bookedCls = await call("/schedule/classes", {
     method: "POST", token: tokens.reception,
-    body: { name: "Khong xoa duoc", coachId: trainers[0].id, startAt: hoursFromNow(272), endAt: hoursFromNow(273) },
+    body: { name: "Khong xoa duoc", serviceType: "yoga", coachId: trainers[0].id, startAt: hoursFromNow(272), endAt: hoursFromNow(273) },
   });
   const bk = await call("/bookings", { method: "POST", token: vy.token, body: { type: "group", classId: bookedCls.data.class._id } });
   assert.equal(bk.status, 201, JSON.stringify(bk.data));
@@ -286,6 +296,12 @@ test("B12: xoá lớp/slot trống được, có khách thì bị chặn", async
   const bookedSlot = await call("/schedule/pt-slots", {
     method: "POST", token: tokens.reception,
     body: { trainerId: trainers[0].id, startAt: hoursFromNow(276), endAt: hoursFromNow(277) },
+  });
+  // H7: đặt PT cần gói loại pt — Thảo Vy seed chỉ có yoga/gym
+  const vyId = (await User.findOne({ phone: "0912345678" }))._id;
+  await Package.create({
+    userId: vyId, name: "PT test B12", serviceType: "pt", price: 1,
+    totalSessions: 5, activatedAt: new Date(), expiresAt: null,
   });
   const bkPt = await call("/bookings", { method: "POST", token: vy.token, body: { type: "pt", slotId: bookedSlot.data.slot._id } });
   assert.equal(bkPt.status, 201, JSON.stringify(bkPt.data));
@@ -318,14 +334,14 @@ test("C1: MỘT HLV không thể bị xếp 2 lịch trùng giờ (lớp đè l�
 
   const first = await call("/schedule/classes", {
     method: "POST", token: tokens.reception,
-    body: { name: "Goc lich", coachId: coach.id, startAt: hoursFromNow(300), endAt: hoursFromNow(301) },
+    body: { name: "Goc lich", serviceType: "pilates", coachId: coach.id, startAt: hoursFromNow(300), endAt: hoursFromNow(301) },
   });
   assert.equal(first.status, 201, JSON.stringify(first.data));
 
   // Lớp thứ hai đè giờ cùng HLV -> 400
   const dupClass = await call("/schedule/classes", {
     method: "POST", token: tokens.reception,
-    body: { name: "De len", coachId: coach.id, startAt: hoursFromNow(300.5), endAt: hoursFromNow(301.5) },
+    body: { name: "De len", serviceType: "pilates", coachId: coach.id, startAt: hoursFromNow(300.5), endAt: hoursFromNow(301.5) },
   });
   assert.equal(dupClass.status, 400);
   assert.match(dupClass.data.error, /trùng giờ/);
@@ -341,14 +357,14 @@ test("C1: MỘT HLV không thể bị xếp 2 lịch trùng giờ (lớp đè l�
   // HLV khác cùng khung giờ thì vẫn được
   const other = await call("/schedule/classes", {
     method: "POST", token: tokens.reception,
-    body: { name: "HLV khac cung gio", coachId: trainers[1].id, startAt: hoursFromNow(300), endAt: hoursFromNow(301) },
+    body: { name: "HLV khac cung gio", serviceType: "pilates", coachId: trainers[1].id, startAt: hoursFromNow(300), endAt: hoursFromNow(301) },
   });
   assert.equal(other.status, 201, JSON.stringify(other.data));
 
   // PATCH dời lớp trống vào giờ bận của chính HLV -> 400
   const free = await call("/schedule/classes", {
     method: "POST", token: tokens.reception,
-    body: { name: "Sap bi doi", coachId: coach.id, startAt: hoursFromNow(305), endAt: hoursFromNow(306) },
+    body: { name: "Sap bi doi", serviceType: "pilates", coachId: coach.id, startAt: hoursFromNow(305), endAt: hoursFromNow(306) },
   });
   const moved = await call(`/schedule/classes/${free.data.class._id}`, {
     method: "PATCH", token: tokens.reception,
@@ -363,14 +379,15 @@ test("C2: gói còn hạn hôm nay nhưng HẾT HẠN TRƯỚC NGÀY buổi tậ
   const userId = (await User.findOne({ phone: "0912345678" }))._id;
   const cls = await call("/schedule/classes", {
     method: "POST", token: tokens.reception,
-    body: { name: "Sau khi goi het han", coachId: (await call("/schedule/trainers", { token: tokens.reception })).data.trainers[1].id, startAt: hoursFromNow(310), endAt: hoursFromNow(311) },
+    body: { name: "Sau khi goi het han", serviceType: "yoga", coachId: (await call("/schedule/trainers", { token: tokens.reception })).data.trainers[1].id, startAt: hoursFromNow(310), endAt: hoursFromNow(311) },
   });
   // Gói còn hạn 24h nữa (còn hiệu lực HÔM NAY) nhưng lớp ở giờ +310h
   await Package.updateMany({ userId }, { $set: { expiresAt: hoursFromNow(24) } });
   const r = await call("/bookings", { method: "POST", token: vy.token, body: { type: "group", classId: cls.data.class._id } });
   assert.equal(r.status, 400);
   assert.match(r.data.error, /hết hạn trước ngày diễn ra/);
-  assert.equal((await Package.findOne({ userId })).usedSessions <= (await Package.findOne({ userId })).totalSessions, true);
+  const yogaPkg = await Package.findOne({ userId, serviceType: "yoga" });
+  assert.equal(yogaPkg.usedSessions <= yogaPkg.totalSessions, true);
   await Package.updateMany({ userId }, { $set: { expiresAt: hoursFromNow(24 * 30) } });
 });
 
@@ -436,4 +453,96 @@ test("C6: HLV tự đổi tên qua /me -> hồ sơ Trainer (tên hiện với kh
   assert.equal(r.status, 200);
   assert.equal((await Trainer.findById(linhUser.trainerId)).name, "HLV Linh Tu Doi");
   await call("/me", { method: "PATCH", token: tokens.trainer, body: { name: "HLV Linh" } });
+});
+
+// ==== her-06 (16/08/2026): HLV không được xem SĐT khách — chặn ở server (H5, C1) ====
+
+test("B15: SĐT khách ẩn với HLV ở /management/bookings; reception/admin vẫn thấy", async () => {
+  const linhId = (await User.findOne({ phone: "0911111111" })).trainerId;
+  const customer = await User.findOne({ phone: "0909090909" });
+  // Lớp + booking riêng cho test (giờ xa tương lai để không đụng dữ liệu seed)
+  const cls = await GymClass.create({
+    name: "Lop test SDT", coachId: linhId, capacity: 5, bookedCount: 1,
+    serviceType: "pilates",
+    startAt: hoursFromNow(200), endAt: hoursFromNow(201),
+  });
+  const bk = await Booking.create({
+    userId: customer._id, type: "group", classId: cls._id, trainerId: linhId,
+    title: "Lop test SDT", startAt: cls.startAt, endAt: cls.endAt, status: "booked",
+  });
+  try {
+    for (const [role, seesPhone] of [["trainer", false], ["reception", true], ["admin", true]]) {
+      const r = await call("/management/bookings?range=upcoming", { token: tokens[role] });
+      assert.equal(r.status, 200, `${role} phải xem được danh sách`);
+      const found = r.data.bookings.find((b) => b.title === "Lop test SDT");
+      assert.ok(found, `${role} phải thấy booking test`);
+      assert.equal(found.customer.name, customer.name, `${role} vẫn thấy TÊN khách`);
+      if (seesPhone) {
+        assert.equal(found.customer.phone, customer.phone, `${role} phải thấy SĐT khách`);
+      } else {
+        assert.ok(!("phone" in found.customer), "HLV không được nhận field phone (kể cả rỗng)");
+      }
+    }
+  } finally {
+    await Booking.deleteOne({ _id: bk._id });
+    await GymClass.deleteOne({ _id: cls._id });
+  }
+});
+
+test("B16: SĐT khách ẩn với HLV ở roster lớp mình; reception vẫn thấy", async () => {
+  const linhId = (await User.findOne({ phone: "0911111111" })).trainerId;
+  const customer = await User.findOne({ phone: "0909090909" });
+  const cls = await GymClass.create({
+    name: "Lop test SDT roster", coachId: linhId, capacity: 5, bookedCount: 1,
+    serviceType: "pilates",
+    startAt: hoursFromNow(210), endAt: hoursFromNow(211),
+  });
+  const bk = await Booking.create({
+    userId: customer._id, type: "group", classId: cls._id, trainerId: linhId,
+    title: "Lop test SDT roster", startAt: cls.startAt, endAt: cls.endAt, status: "booked",
+  });
+  try {
+    const asTrainer = await call(`/management/classes/${cls._id}/roster`, { token: tokens.trainer });
+    assert.equal(asTrainer.status, 200);
+    assert.equal(asTrainer.data.customers.length, 1);
+    assert.equal(asTrainer.data.customers[0].name, customer.name);
+    assert.ok(!("phone" in asTrainer.data.customers[0]), "HLV không được nhận field phone trong roster");
+
+    const asReception = await call(`/management/classes/${cls._id}/roster`, { token: tokens.reception });
+    assert.equal(asReception.status, 200);
+    assert.equal(asReception.data.customers[0].phone, customer.phone, "lễ tân vẫn thấy SĐT");
+  } finally {
+    await Booking.deleteOne({ _id: bk._id });
+    await GymClass.deleteOne({ _id: cls._id });
+  }
+});
+
+test("B17: HLV không dò được SĐT khách qua ?search= (chỉ tìm theo tên); lễ tân vẫn tìm theo SĐT", async () => {
+  const linhId = (await User.findOne({ phone: "0911111111" })).trainerId;
+  const customer = await User.findOne({ phone: "0909090909" });
+  const cls = await GymClass.create({
+    name: "Lop test search SDT", coachId: linhId, capacity: 5, bookedCount: 1,
+    serviceType: "pilates",
+    startAt: hoursFromNow(220), endAt: hoursFromNow(221),
+  });
+  const bk = await Booking.create({
+    userId: customer._id, type: "group", classId: cls._id, trainerId: linhId,
+    title: "Lop test search SDT", startAt: cls.startAt, endAt: cls.endAt, status: "booked",
+  });
+  const has = (r) => r.data.bookings.some((b) => b.title === "Lop test search SDT");
+  try {
+    // HLV search theo cụm số trong SĐT khách -> KHÔNG được ra kết quả (chặn kênh suy diễn)
+    const byPhone = await call(`/management/bookings?range=upcoming&search=${customer.phone.slice(0, 6)}`, { token: tokens.trainer });
+    assert.equal(byPhone.status, 200);
+    assert.ok(!has(byPhone), "HLV search theo số phải KHÔNG match — nếu match là dò được SĐT");
+    // HLV search theo tên -> vẫn dùng được bình thường
+    const byName = await call(`/management/bookings?range=upcoming&search=${encodeURIComponent(customer.name)}`, { token: tokens.trainer });
+    assert.ok(has(byName), "HLV search theo tên khách vẫn phải ra kết quả");
+    // Lễ tân search theo SĐT -> vẫn ra (nghiệp vụ quầy cần)
+    const reception = await call(`/management/bookings?range=upcoming&search=${customer.phone.slice(0, 6)}`, { token: tokens.reception });
+    assert.ok(has(reception), "lễ tân search theo SĐT vẫn phải ra kết quả");
+  } finally {
+    await Booking.deleteOne({ _id: bk._id });
+    await GymClass.deleteOne({ _id: cls._id });
+  }
 });

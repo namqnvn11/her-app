@@ -1,29 +1,33 @@
-import { View, Text, StyleSheet } from "react-native";
+import { View, Text, TouchableOpacity, StyleSheet } from "react-native";
+import { Feather } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import Svg, { Circle, Text as SvgText } from "react-native-svg";
-import { COLORS } from "../theme";
+import { useTheme } from "../theme";
 
-export default function TopBar({ title, sub }) {
+// onBack (tuỳ chọn): nút quay lại nằm NGAY TRONG TopBar, thẳng hàng với title —
+// mọi màn dùng chung 1 kiểu, không màn nào tự chế mũi tên riêng nữa (góp ý 17/08)
+export default function TopBar({ title, sub, onBack }) {
   // Cộng inset trên để tiêu đề không bị status bar / tai thỏ đè lên (headerShown: false)
   const insets = useSafeAreaInsets();
+  const { c } = useTheme();
   return (
-    <View style={[styles.wrap, { paddingTop: 18 + insets.top }]}>
-      <Svg width={30} height={30} viewBox="0 0 1000 1000">
-        <Circle cx="500" cy="500" r="430" fill="none" stroke={COLORS.beigeDark} strokeWidth="60" />
-        <SvgText x="500" y="600" textAnchor="middle" fontSize="330" fontWeight="800" fill={COLORS.ink}>
-          HER
-        </SvgText>
-      </Svg>
-      <View style={{ marginLeft: 10 }}>
-        <Text style={styles.title}>{title}</Text>
-        {!!sub && <Text style={styles.sub}>{sub}</Text>}
+    <View style={[styles.wrap, { paddingTop: 14 + insets.top }]}>
+      <View style={styles.titleRow}>
+        {!!onBack && (
+          <TouchableOpacity onPress={onBack} hitSlop={10}>
+            <Feather name="chevron-left" size={22} color={c.primary} />
+          </TouchableOpacity>
+        )}
+        <Text style={[styles.title, { color: c.ink }]} numberOfLines={1}>{title}</Text>
       </View>
+      {!!sub && <Text style={[styles.sub, { color: c.inkSoft }, !!onBack && styles.subIndent]}>{sub}</Text>}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  wrap: { flexDirection: "row", alignItems: "center", paddingHorizontal: 20, paddingBottom: 12 },
-  title: { fontSize: 18, fontWeight: "800", color: COLORS.ink },
-  sub: { fontSize: 12, color: COLORS.inkSoft, marginTop: 2 },
+  wrap: { paddingHorizontal: 22, paddingBottom: 10 },
+  titleRow: { flexDirection: "row", alignItems: "center", gap: 8 },
+  title: { fontSize: 20, fontWeight: "800", flexShrink: 1 },
+  sub: { fontSize: 11.5, marginTop: 3 },
+  subIndent: { marginLeft: 30 }, // thụt cùng title khi có nút quay lại (22 icon + 8 gap)
 });

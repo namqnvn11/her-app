@@ -1,18 +1,27 @@
 const express = require("express");
+const bcrypt = require("bcryptjs");
 const User = require("../models/User");
 const Trainer = require("../models/Trainer");
 const Package = require("../models/Package");
 const Booking = require("../models/Booking");
 const { requireAuth } = require("../middleware/auth");
 const { MIN_CANCEL_HOURS } = require("../utils/cancelRule");
+const { ATTENDANCE_OPEN_BEFORE_MINUTES } = require("../utils/attendanceRule");
 const wrap = require("../utils/asyncHandler");
+const { serializePackage } = require("../utils/packages");
+const { isValidPassword, MIN_PASSWORD_LENGTH } = require("../utils/validators");
+const { isValidClassType, labelOf } = require("../utils/disciplines");
+const { blockedMinutes, recordFailure, resetAttempts } = require("../utils/loginRateLimit");
 
 const router = express.Router();
 router.use(requireAuth);
 
 // GET /api/me — kèm config để app đồng bộ quy tắc với server (vd số giờ tự hủy)
 router.get("/", (req, res) => {
-  res.json({ user: req.user.toPublicJSON(), config: { minCancelHours: MIN_CANCEL_HOURS } });
+  res.json({
+    user: req.user.toPublicJSON(),
+    config: { minCancelHours: MIN_CANCEL_HOURS, attendanceOpenBeforeMinutes: ATTENDANCE_OPEN_BEFORE_MINUTES, minPasswordLength: MIN_PASSWORD_LENGTH },
+  });
 });
 
 // PATCH /api/me  { name?, avatarUrl? }  -- đổi số điện thoại nên xử lý riêng vì cần unique-check
@@ -22,31 +31,129 @@ router.patch("/", wrap(async (req, res) => {
   if (avatarUrl !== undefined) req.user.avatarUrl = avatarUrl;
   await req.user.save();
 
-  // HLV tự đổi tên -> đồng bộ hồ sơ Trainer (tên hiện ở lịch lớp, danh sách đặt PT)
-  if (name !== undefined && req.user.role === "trainer" && req.user.trainerId) {
+  // Tài khoản có hồ sơ HLV (role trainer HOẶC admin kiêm HLV — review her-11 N4) tự đổi tên
+  // -> đồng bộ hồ sơ Trainer (tên hiện ở lịch lớp, danh sách đặt PT)
+  if (name !== undefined && req.user.trainerId) {
     await Trainer.updateOne({ _id: req.user.trainerId }, { $set: { name: req.user.name } });
   }
 
   res.json({ user: req.user.toPublicJSON() });
 }));
 
-// GET /api/me/package -- gói đang active gần nhất (chưa hết hạn)
+// POST /api/me/change-password { currentPassword, newPassword } — mục 10 (her-14):
+// MỌI vai trò tự đổi mật khẩu của chính mình. Phải nhập đúng mật khẩu hiện tại;
+// mật khẩu mới dùng chung luật với lúc tạo tài khoản (validators). Token đang dùng
+// vẫn hợp lệ sau khi đổi — không bắt đăng nhập lại.
+router.post("/change-password", wrap(async (req, res) => {
+  const { currentPassword, newPassword } = req.body;
+  if (typeof currentPassword !== "string" || !currentPassword) {
+    return res.status(400).json({ error: "Vui lòng nhập mật khẩu hiện tại" });
+  }
+  if (typeof newPassword !== "string" || !isValidPassword(newPassword)) {
+    return res.status(400).json({ error: `Mật khẩu mới tối thiểu ${MIN_PASSWORD_LENGTH} ký tự` });
+  }
+  // Rate-limit như đăng nhập (review her-14 A1): kẻ cầm máy đang mở app không được dùng
+  // endpoint này dò mật khẩu không giới hạn. Key riêng theo user, chung hạ tầng loginRateLimit.
+  const rlKey = `pw:${req.user._id}`;
+  const blocked = blockedMinutes(rlKey);
+  if (blocked) {
+    return res.status(429).json({ error: `Sai mật khẩu quá nhiều lần — thử lại sau ${blocked} phút` });
+  }
+  const ok = await bcrypt.compare(currentPassword, req.user.passwordHash);
+  if (!ok) {
+    recordFailure(rlKey);
+    return res.status(400).json({ error: "Mật khẩu hiện tại không đúng" });
+  }
+  resetAttempts(rlKey);
+  req.user.passwordHash = await bcrypt.hash(newPassword, 10);
+  // Đá mọi phiên cũ (A2) — app tự đăng nhập lại ngay bằng mật khẩu mới nên người đổi không gián đoạn
+  req.user.passwordChangedAt = new Date();
+  await req.user.save();
+  res.json({ ok: true });
+}));
+
+// POST /api/me/trainer-profile { name, specialties? } — admin KIÊM HLV (mục 6; chuyên môn CHỌN từ danh mục — her-19):
+// admin bật 1 lần trong màn Cá nhân → tạo hồ sơ Trainer gắn vào tài khoản; từ đó xuất hiện
+// trong danh sách HLV, tự mở khung PT, khách đặt như HLV thường. CHỈ admin (H5) — tài khoản
+// HLV thường đã có hồ sơ từ lúc quầy tạo; không mở đường tự phong HLV cho role khác.
+router.post("/trainer-profile", wrap(async (req, res) => {
+  if (req.user.role !== "admin") {
+    return res.status(403).json({ error: "Chỉ admin mới mở được hồ sơ HLV cho chính mình" });
+  }
+  if (req.user.trainerId) {
+    return res.status(400).json({ error: "Tài khoản này đã có hồ sơ HLV" });
+  }
+  const { name, specialty, specialties } = req.body;
+  if (typeof name !== "string" || !name.trim() || name.trim().length > 100) {
+    return res.status(400).json({ error: "Vui lòng nhập tên hiển thị của HLV (tối đa 100 ký tự)" });
+  }
+  const keys = [...new Set(Array.isArray(specialties) ? specialties : [])];
+  if (keys.length === 0) {
+    return res.status(400).json({ error: "Chọn ít nhất 1 chuyên môn (từ danh mục bộ môn)" });
+  }
+  for (const k of keys) {
+    if (typeof k !== "string" || !(await isValidClassType(k))) {
+      return res.status(400).json({ error: "Chuyên môn không hợp lệ — chọn từ danh mục bộ môn" });
+    }
+  }
+  const specialtyLabel = keys.length
+    ? (await Promise.all(keys.map((k) => labelOf(k)))).join(" · ")
+    : (typeof specialty === "string" ? specialty.trim().slice(0, 200) : "");
+  const trainer = await Trainer.create({
+    name: name.trim(),
+    specialty: specialtyLabel,
+    specialties: keys,
+  });
+  // Gán atomic với điều kiện CHƯA có trainerId — 2 request song song thì chỉ 1 gán được
+  const updated = await User.findOneAndUpdate(
+    { _id: req.user._id, trainerId: null },
+    { $set: { trainerId: trainer._id } },
+    { new: true }
+  );
+  if (!updated) {
+    await Trainer.deleteOne({ _id: trainer._id }); // dọn hồ sơ thừa của request thua
+    return res.status(400).json({ error: "Tài khoản này đã có hồ sơ HLV" });
+  }
+  res.status(201).json({ user: updated.toPublicJSON(), trainer: { id: trainer._id, name: trainer.name } });
+}));
+
+// So sánh tất định cho danh sách gói: hạn gần trước (không hạn cuối), hạn bằng nhau thì
+// gói kích hoạt trước đứng trước, cuối cùng theo id — không phụ thuộc thứ tự Mongo trả về
+function byExpiryThenActivation(a, b) {
+  const ax = a.expiresAt ? new Date(a.expiresAt).getTime() : Infinity;
+  const bx = b.expiresAt ? new Date(b.expiresAt).getTime() : Infinity;
+  if (ax !== bx) return ax - bx;
+  const aa = new Date(a.activatedAt).getTime();
+  const ba = new Date(b.activatedAt).getTime();
+  if (aa !== ba) return aa - ba;
+  return String(a.id).localeCompare(String(b.id));
+}
+
+// GET /api/me/package -- gói "nổi bật" cho card trang chủ (giữ tương thích app cũ):
+// gói đang active có hạn gần nhất; không có gói có hạn thì lấy gói không thời hạn
 router.get("/package", wrap(async (req, res) => {
-  const pkg = await Package.findOne({ userId: req.user._id, expiresAt: { $gte: new Date() } }).sort({
-    expiresAt: -1,
+  const all = await Package.find({ userId: req.user._id });
+  const active = all.map(serializePackage).filter((p) => p.status === "active");
+  active.sort(byExpiryThenActivation);
+  if (active[0]) return res.json({ package: active[0] });
+  // Không có gói active nhưng CÓ gói đang bảo lưu -> trả gói đó (status "paused") để app
+  // nói đúng "gói đang bảo lưu" thay vì "chưa có gói, liên hệ mua" (C6)
+  const paused = all.map(serializePackage).filter((p) => p.status === "paused");
+  paused.sort(byExpiryThenActivation);
+  res.json({ package: paused[0] || null });
+}));
+
+// GET /api/me/packages -- toàn bộ gói của tôi: đang dùng trước (hạn gần lên đầu, không hạn
+// cuối nhóm), gói bảo lưu/hết buổi/hết hạn xếp sau — học viên tự tra cứu (quyết định 12/08/2026)
+router.get("/packages", wrap(async (req, res) => {
+  const all = await Package.find({ userId: req.user._id });
+  const items = all.map(serializePackage);
+  const order = { active: 0, paused: 1, used_up: 2, expired: 3 };
+  items.sort((a, b) => {
+    if (order[a.status] !== order[b.status]) return order[a.status] - order[b.status];
+    return byExpiryThenActivation(a, b);
   });
-  if (!pkg) return res.json({ package: null });
-  res.json({
-    package: {
-      id: pkg._id,
-      name: pkg.name,
-      price: pkg.price,
-      totalSessions: pkg.totalSessions,
-      usedSessions: pkg.usedSessions,
-      activatedAt: pkg.activatedAt,
-      expiresAt: pkg.expiresAt,
-    },
-  });
+  res.json({ packages: items });
 }));
 
 // GET /api/me/bookings -- lịch sắp tới VÀ đang diễn ra (status booked, chưa qua giờ KẾT THÚC —
@@ -54,7 +161,8 @@ router.get("/package", wrap(async (req, res) => {
 router.get("/bookings", wrap(async (req, res) => {
   const bookings = await Booking.find({
     userId: req.user._id,
-    status: "booked",
+    // $ne cancelled: buổi được điểm danh sớm (trước giờ) vẫn là buổi SẮP diễn ra của khách
+    status: { $ne: "cancelled" },
     endAt: { $gte: new Date() },
   })
     .sort({ startAt: 1 })
@@ -62,22 +170,34 @@ router.get("/bookings", wrap(async (req, res) => {
   res.json({ bookings: bookings.map(serializeBooking) });
 }));
 
-// GET /api/me/history -- đã tập/đã hủy hoặc đã qua giờ kết thúc
+// GET /api/me/history?page=&limit= -- đã tập/đã hủy hoặc đã qua giờ kết thúc.
+// her-28: phân trang (mới nhất trước, app cuộn cuối tự nạp tiếp) — không truyền gì thì
+// mặc định 50 như cũ để client cũ không vỡ. _id làm khoá phụ chống lặp giữa 2 trang.
 router.get("/history", wrap(async (req, res) => {
+  const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+  const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 50));
+  // Lịch sử = buổi ĐÃ KẾT THÚC hoặc ĐÃ HỦY (chốt 16/08) — buổi điểm danh sớm còn đang
+  // diễn ra vẫn nằm ở "Sắp tới" với nhãn trạng thái, kết thúc xong mới chuyển vào đây
   const bookings = await Booking.find({
     userId: req.user._id,
-    $or: [{ status: { $in: ["cancelled", "completed", "no_show"] } }, { endAt: { $lt: new Date() } }],
+    $or: [{ status: "cancelled" }, { endAt: { $lt: new Date() } }],
   })
-    .sort({ startAt: -1 })
-    .limit(50)
+    .sort({ startAt: -1, _id: -1 })
+    .skip((page - 1) * limit)
+    .limit(limit + 1) // lấy dư 1 để biết còn trang sau
     .populate("trainerId", "name");
-  res.json({ bookings: bookings.map(serializeBooking) });
+  const hasMore = bookings.length > limit;
+  if (hasMore) bookings.pop();
+  res.json({ hasMore, bookings: bookings.map(serializeBooking) });
 }));
 
 function serializeBooking(b) {
   return {
     id: b._id,
     type: b.type,
+    // id lớp/slot để màn Đặt lịch đánh dấu "Đã đặt" ngay trên danh sách (góp ý 16/08)
+    classId: b.classId,
+    slotId: b.slotId,
     title: b.title,
     coach: b.trainerId?.name || "",
     startAt: b.startAt,

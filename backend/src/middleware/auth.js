@@ -20,6 +20,11 @@ async function requireAuth(req, res, next) {
     const user = await User.findById(payload.sub);
     if (!user) return res.status(401).json({ error: "Tài khoản không còn tồn tại" });
     if (user.isActive === false) return res.status(403).json({ error: "Tài khoản đã bị khoá" });
+    // Token cấp trước lần đổi mật khẩu gần nhất -> hết hiệu lực (her-14 A2). iat tính bằng
+    // GIÂY, trừ hao 2s lệch đồng hồ để phiên VỪA đổi mật khẩu tự đăng nhập lại không bị kẹt.
+    if (user.passwordChangedAt && payload.iat * 1000 < user.passwordChangedAt.getTime() - 2000) {
+      return res.status(401).json({ error: "Mật khẩu đã được thay đổi — vui lòng đăng nhập lại" });
+    }
     req.user = user;
     next();
   } catch (err) {

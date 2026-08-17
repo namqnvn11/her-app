@@ -1,13 +1,18 @@
-import { useState, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { View, Text, ScrollView, TextInput, TouchableOpacity, StyleSheet, RefreshControl } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
 import { Feather } from "@expo/vector-icons";
 import TopBar from "../components/TopBar";
-import Pill from "../components/Pill";
 import AppButton from "../components/AppButton";
+import SectionLabel from "../components/SectionLabel";
+import FormSheet from "../components/FormSheet";
+import CustomerPackagesModal from "./CustomerPackagesModal";
+import ConfirmSheet from "../components/ConfirmSheet";
+import * as Clipboard from "expo-clipboard";
+import MoneyInput from "../components/MoneyInput";
 import { api } from "../api/client";
 import { useAuth } from "../context/AuthContext";
-import { COLORS } from "../theme";
+import { useTheme } from "../theme";
 
 // Vai trò mà mỗi tầng được phép tạo — khớp với backend (ALLOWED_TO_MANAGE)
 // Admin quản lý được mọi loại tài khoản, gồm cả học viên (quyết định 07/08/2026, L4)
@@ -24,19 +29,55 @@ const MANAGEABLE_ROLES = {
 
 const ROLE_LABEL = { admin: "Admin", reception: "Lễ tân", trainer: "Nhân viên", customer: "Học viên" };
 
+// Mật khẩu ngẫu nhiên dễ đọc cho khách (bỏ ký tự dễ nhầm 0/O, 1/l...)
+function randomPassword() {
+  const chars = "abcdefghjkmnpqrstuvwxyz23456789";
+  let pw = "";
+  for (let i = 0; i < 8; i++) pw += chars[Math.floor(Math.random() * chars.length)];
+  return pw;
+}
+
 export default function AccountsScreen() {
   const { user } = useAuth();
+  const { c } = useTheme();
   const options = MANAGEABLE_ROLES[user?.role] || [];
   const [role, setRole] = useState(options[0]?.key || "customer");
   const [accounts, setAccounts] = useState([]);
+  // her-23: ô tìm theo tên / SĐT — lọc NGAY khi gõ, không phân biệt hoa thường/dấu,
+  // áp cho tab đang xem (học viên, HLV, lễ tân đều tìm được)
+  const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState("");
   // toast: { msg, isError } — lỗi hiện icon/màu riêng, không giống thông báo thành công
   const [toast, setToast] = useState(null);
 
+  // Bấm vào 1 tài khoản -> mở thẻ thao tác (mẫu 10); resetInfo giữ mật khẩu mới vừa cấp
+  const [selectedId, setSelectedId] = useState(null);
+  const [resetInfo, setResetInfo] = useState(null); // { id, password }
+  // her-17: hành động nhạy cảm phải qua hộp xác nhận — { kind: "reset"|"lock", acc } | null
+  const [confirmAction, setConfirmAction] = useState(null);
+  const [copied, setCopied] = useState(false);
+  const [pkgCustomer, setPkgCustomer] = useState(null); // mở màn Gói tập của 1 học viên
+  // Mục 7: admin thiết lập thù lao HLV — sheet riêng, lưu = tạo BẢN GHI MỨC MỚI (áp từ hôm nay)
+  const [paySheet, setPaySheet] = useState(null); // account đang chỉnh
+  const [payForm, setPayForm] = useState({ baseSalary: "0", groupAmount: "0", groupPer: "session", pt1Amount: "0", ptGroupAmount: "0", ptGroupPer: "session" });
+  const [payEffective, setPayEffective] = useState(null);
+  const [payError, setPayError] = useState("");
+
+  // Form tạo mới nằm trong bottom sheet — bấm nút nổi "+ Tài khoản mới" để mở
+  const [sheetOpen, setSheetOpen] = useState(false);
+  // Lỗi lúc tạo hiện NGAY TRONG sheet — toast ngoài màn bị Modal che mất (L8)
+  const [sheetError, setSheetError] = useState("");
   // Không điền sẵn mật khẩu mặc định — người tạo phải tự đặt (tối thiểu 6 ký tự)
-  const [form, setForm] = useState({ name: "", phone: "", password: "", specialty: "" });
-  const [busy, setBusy] = useState(false); // chặn bấm đúp tạo/khoá tài khoản
+  const [form, setForm] = useState({ name: "", phone: "", password: "", specialties: [] });
+  // her-19: chuyên môn HLV = CHỌN từ danh mục bộ môn (không nhập tay)
+  const [disciplines, setDisciplines] = useState([]);
+  useEffect(() => {
+    api.get("/disciplines")
+      .then((r) => setDisciplines(r.disciplines.map((d) => [d.key, d.label])))
+      .catch(() => {});
+  }, []);
+  const [busy, setBusy] = useState(false); // chặn bấm đúp tạo/khoá/cấp lại mật khẩu
 
   const load = useCallback(async (r = role) => {
     setLoading(true); // để RefreshControl hiện spinner đúng lúc kéo làm mới
@@ -68,23 +109,97 @@ export default function AccountsScreen() {
 
   const changeRole = (r) => {
     setRole(r);
+    setSelectedId(null);
+    setResetInfo(null);
+    // Chuỗi tìm của tab cũ mà giữ sang tab mới thì hiện "không khớp" khó hiểu (review V1)
+    setSearch("");
     setLoading(true);
+  };
+
+  const closeAllSheets = () => {
+    setSheetOpen(false);
+    setPaySheet(null);
+    setConfirmAction(null);
+    setPkgCustomer(null);
+  };
+
+  const openPaySheet = async (a) => {
+    closeAllSheets();
+    setPayError("");
+    setPayEffective(null);
+    setPayForm({ baseSalary: "0", groupAmount: "0", groupPer: "session", pt1Amount: "0", ptGroupAmount: "0", ptGroupPer: "session" });
+    setPaySheet(a);
+    try {
+      const res = await api.get("/payroll/settings");
+      const row = res.trainers.find((t) => String(t.id) === String(a.trainerId));
+      if (row?.rate) {
+        setPayForm({
+          baseSalary: String(row.rate.baseSalary),
+          groupAmount: String(row.rate.groupAmount),
+          groupPer: row.rate.groupPer,
+          pt1Amount: String(row.rate.pt1Amount),
+          ptGroupAmount: String(row.rate.ptGroupAmount),
+          ptGroupPer: row.rate.ptGroupPer,
+        });
+        setPayEffective(row.rate.effectiveFrom);
+      }
+    } catch (err) {
+      setPayError(err.message);
+    }
+  };
+
+  const savePayRates = async () => {
+    if (busy || !paySheet) return;
+    const nums = {};
+    for (const [key, label] of [
+      ["baseSalary", "Lương cứng"],
+      ["groupAmount", "Hoa hồng lớp nhóm"],
+      ["pt1Amount", "Hoa hồng PT 1:1"],
+      ["ptGroupAmount", "Hoa hồng PT nhóm"],
+    ]) {
+      const raw = String(payForm[key] ?? "").trim();
+      const n = Number(raw);
+      if (raw === "" || !Number.isInteger(n) || n < 0 || n > 1e9) {
+        return setPayError(`${label} phải là số nguyên VND từ 0 đến 1 tỷ (nhập 0 nếu không trả)`);
+      }
+      nums[key] = n;
+    }
+    setPayError("");
+    setBusy(true);
+    try {
+      await api.post(`/payroll/settings/${paySheet.trainerId}`, {
+        ...nums,
+        groupPer: payForm.groupPer,
+        ptGroupPer: payForm.ptGroupPer,
+      });
+      flash("Đã lưu mức thù lao mới — áp dụng từ bây giờ");
+      setPaySheet(null);
+    } catch (err) {
+      setPayError(err.message); // hiện trong sheet (L8)
+    } finally {
+      setBusy(false);
+    }
   };
 
   const create = async () => {
     if (busy) return;
     if (!form.name.trim() || !form.phone.trim()) {
-      flash("Vui lòng nhập tên và số điện thoại", true);
+      setSheetError("Vui lòng nhập tên và số điện thoại");
       return;
     }
     if (!/^0\d{9}$/.test(form.phone.trim())) {
-      flash("Số điện thoại không hợp lệ (10 chữ số, bắt đầu bằng 0)", true);
+      setSheetError("Số điện thoại không hợp lệ (10 chữ số, bắt đầu bằng 0)");
       return;
     }
     if ((form.password || "").length < 6) {
-      flash("Mật khẩu tối thiểu 6 ký tự", true);
+      setSheetError("Mật khẩu tối thiểu 6 ký tự");
       return;
     }
+    if (role === "trainer" && form.specialties.length === 0) {
+      setSheetError("Chọn ít nhất 1 chuyên môn cho HLV");
+      return;
+    }
+    setSheetError("");
     setBusy(true);
     try {
       await api.post("/accounts", {
@@ -92,13 +207,14 @@ export default function AccountsScreen() {
         phone: form.phone.trim(),
         password: form.password,
         role,
-        specialty: role === "trainer" ? form.specialty : undefined,
+        specialties: role === "trainer" ? form.specialties : undefined,
       });
       flash(`Đã tạo tài khoản ${ROLE_LABEL[role]}`);
-      setForm({ name: "", phone: "", password: "", specialty: "" });
+      setForm({ name: "", phone: "", password: "", specialties: [] });
+      setSheetOpen(false);
       load(role);
     } catch (err) {
-      flash(err.message, true);
+      setSheetError(err.message); // hiện trong sheet — không để lỗi chìm sau Modal
     } finally {
       setBusy(false);
     }
@@ -119,96 +235,320 @@ export default function AccountsScreen() {
     }
   };
 
-  return (
-    <View style={{ flex: 1, backgroundColor: COLORS.bg }}>
-      <TopBar
-        title="Quản trị tài khoản"
-        sub={user?.role === "admin" ? "Tạo & quản lý tài khoản lễ tân, nhân viên, học viên" : "Tạo & quản lý tài khoản học viên"}
-      />
+  // Cấp lại mật khẩu ngẫu nhiên (quyết định 14/08/2026) — dùng PATCH password sẵn có,
+  // server tự kiểm tra tầng quyền (lễ tân chỉ với học viên, admin với mọi tài khoản — H5)
+  const resetPassword = async (acc) => {
+    if (busy) return;
+    setBusy(true);
+    const password = randomPassword();
+    try {
+      await api.patch(`/accounts/${acc.id}`, { password });
+      setResetInfo({ id: acc.id, password });
+      flash("Đã cấp lại mật khẩu");
+    } catch (err) {
+      flash(err.message, true);
+    } finally {
+      setBusy(false);
+    }
+  };
 
-      <View style={styles.tabs}>
-        {options.map((o) => (
-          <TouchableOpacity
-            key={o.key}
-            onPress={() => changeRole(o.key)}
-            style={[styles.tabBtn, role === o.key && styles.tabBtnActive]}
-          >
-            <Text style={[styles.tabLabel, role === o.key && { color: COLORS.ink }]}>{o.label}</Text>
-          </TouchableOpacity>
-        ))}
+  const runConfirmed = async () => {
+    if (!confirmAction) return;
+    const { kind, acc } = confirmAction;
+    if (kind === "reset") await resetPassword(acc);
+    else await toggleActive(acc);
+    setConfirmAction(null);
+  };
+
+  const copyPassword = async (password) => {
+    try {
+      await Clipboard.setStringAsync(password);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      flash("Không copy được — hãy chép tay mật khẩu", true);
+    }
+  };
+
+  const inputStyle = [styles.input, { borderBottomColor: c.line, color: c.ink }];
+
+  // her-23: lọc danh sách theo chuỗi tìm — bỏ dấu + lowercase để "duc" khớp "Đức"
+  const norm = (s) =>
+    String(s || "")
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[̀-ͯ]/g, "")
+      .replace(/đ/g, "d");
+  const q = norm(search.trim());
+  // SĐT gõ có khoảng trắng ("0912 345") vẫn khớp — so phần số với phần số (review N3)
+  const qDigits = q.replace(/\D/g, "");
+  const visible = q
+    ? accounts.filter(
+        (a) =>
+          norm(a.name).includes(q) ||
+          (qDigits && String(a.phone || "").includes(qDigits))
+      )
+    : accounts;
+
+  return (
+    <View style={{ flex: 1, backgroundColor: c.bg }}>
+      <TopBar title="Tài khoản" />
+
+      <View style={{ paddingHorizontal: 22 }}>
+        <View style={[styles.searchBox, { backgroundColor: c.card, borderColor: c.line }]}>
+          <Feather name="search" size={14} color={c.inkSoft} />
+          <TextInput
+            value={search}
+            onChangeText={setSearch}
+            placeholder="Tìm theo tên hoặc số điện thoại"
+            placeholderTextColor={c.inkSoft}
+            style={[styles.searchInput, { color: c.ink }]}
+            returnKeyType="search"
+          />
+        </View>
+        <View style={[styles.tabs, { borderBottomColor: c.line }]}>
+          {options.map((o) => (
+            <TouchableOpacity
+              key={o.key}
+              onPress={() => changeRole(o.key)}
+              style={[styles.tabBtn, role === o.key && { borderBottomWidth: 2.5, borderBottomColor: c.primary }]}
+            >
+              <Text style={[styles.tabLabel, { color: role === o.key ? c.primary : c.inkSoft }]}>{o.label}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
       </View>
 
-      {!!errorMsg && <Text style={styles.errorText}>{errorMsg}</Text>}
+      {!!errorMsg && <Text style={[styles.error, { color: c.danger }]}>{errorMsg}</Text>}
 
       <ScrollView
-        contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 100, gap: 10 }}
-        refreshControl={<RefreshControl refreshing={loading} onRefresh={() => load(role)} tintColor={COLORS.ink} />}
+        contentContainerStyle={{ paddingHorizontal: 22, paddingBottom: 110 }}
+        refreshControl={<RefreshControl refreshing={loading} onRefresh={() => load(role)} tintColor={c.primary} />}
       >
-        <View style={styles.formCard}>
-          <Text style={styles.formTitle}>Tạo tài khoản {ROLE_LABEL[role]} mới</Text>
-          <Text style={styles.label}>Họ và tên</Text>
-          <TextInput value={form.name} onChangeText={(v) => setForm((f) => ({ ...f, name: v }))} style={styles.input} />
-          <Text style={styles.label}>Số điện thoại</Text>
-          <TextInput
-            value={form.phone}
-            onChangeText={(v) => setForm((f) => ({ ...f, phone: v }))}
-            keyboardType="phone-pad"
-            style={styles.input}
-          />
-          {role === "trainer" && (
-            <>
-              <Text style={styles.label}>Chuyên môn (VD: Pilates & Mobility)</Text>
-              <TextInput
-                value={form.specialty}
-                onChangeText={(v) => setForm((f) => ({ ...f, specialty: v }))}
-                style={styles.input}
-              />
-            </>
-          )}
-          <Text style={styles.label}>Mật khẩu ban đầu (tối thiểu 6 ký tự)</Text>
-          <TextInput
-            value={form.password}
-            onChangeText={(v) => setForm((f) => ({ ...f, password: v }))}
-            placeholder="Người dùng nên đổi sau lần đăng nhập đầu"
-            placeholderTextColor={COLORS.inkSoft}
-            autoCapitalize="none"
-            autoCorrect={false}
-            style={styles.input}
-          />
-          <AppButton disabled={busy} onPress={create}>Tạo tài khoản</AppButton>
-        </View>
-
-        {accounts.map((a) => (
-          <View key={a.id} style={styles.card}>
-            <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
-              <View>
-                <Text style={styles.cardTitle}>{a.name}</Text>
-                <Text style={styles.cardMeta}>{a.phone}</Text>
+        {visible.length === 0 && !loading && (
+          <Text style={[styles.empty, { color: c.inkSoft }]}>
+            {q ? "Không có tài khoản nào khớp tìm kiếm." : "Chưa có tài khoản nào."}
+          </Text>
+        )}
+        {visible.map((a, i) => (
+          <View key={a.id}>
+            <TouchableOpacity
+              activeOpacity={0.7}
+              onPress={() => {
+                setSelectedId(selectedId === a.id ? null : a.id);
+                setResetInfo(null);
+              }}
+              style={[
+                styles.row,
+                i !== visible.length - 1 && selectedId !== a.id && { borderBottomWidth: 1, borderBottomColor: c.hairline },
+                !a.isActive && { opacity: 0.55 },
+              ]}
+            >
+              <View style={[styles.avatar, { backgroundColor: c.primaryTint }]}>
+                <Text style={[styles.avatarText, { color: c.primary }]}>
+                  {(a.name || "?").slice(0, 1).toUpperCase()}
+                </Text>
               </View>
-              <Pill tone={a.isActive ? "taupe" : "danger"}>{a.isActive ? "Đang hoạt động" : "Đã khoá"}</Pill>
-            </View>
-            <View style={{ marginTop: 10 }}>
-              <AppButton
-                variant="outline"
-                onPress={() => toggleActive(a)}
-                icon={
-                  <Feather
-                    name={a.isActive ? "lock" : "unlock"}
-                    size={14}
-                    color={COLORS.ink}
-                    style={{ marginRight: 2 }}
-                  />
-                }
-              >
-                {a.isActive ? "Khoá tài khoản" : "Mở lại tài khoản"}
-              </AppButton>
-            </View>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.rowTitle, { color: c.ink }]}>{a.name}</Text>
+                <Text style={[styles.rowMeta, { color: c.inkSoft }]}>{a.phone}</Text>
+              </View>
+              <Text style={[styles.status, { color: a.isActive ? c.inkSoft : c.primary }]}>
+                {a.isActive ? "Hoạt động" : "Đã khoá"}
+              </Text>
+            </TouchableOpacity>
+
+            {selectedId === a.id && (
+              <View style={[styles.actionCard, { backgroundColor: c.card }]}>
+                <Text style={[styles.actionName, { color: c.ink }]}>{a.name}</Text>
+                <View style={{ flexDirection: "row", gap: 8, marginTop: 10 }}>
+                  <View style={{ flex: 1 }}>
+                    <AppButton variant="ghost" disabled={busy} onPress={() => { closeAllSheets(); setConfirmAction({ kind: "reset", acc: a }); }}>
+                      Cấp lại mật khẩu
+                    </AppButton>
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <AppButton disabled={busy} onPress={() => { closeAllSheets(); setConfirmAction({ kind: "lock", acc: a }); }}>
+                      {a.isActive ? "Khoá tài khoản" : "Mở khoá"}
+                    </AppButton>
+                  </View>
+                </View>
+                {role === "customer" && (
+                  <AppButton
+                    variant="outline"
+                    style={{ marginTop: 8 }}
+                    onPress={() => { closeAllSheets(); setPkgCustomer(a); }}
+                    icon={<Feather name="credit-card" size={13} color={c.primary} style={{ marginRight: 2 }} />}
+                  >
+                    Gói tập &amp; thanh toán
+                  </AppButton>
+                )}
+                {/* Mục 7: chỉ admin thiết lập thù lao (server cũng chặn — H5) */}
+                {role === "trainer" && user?.role === "admin" && !!a.trainerId && (
+                  <AppButton variant="outline" style={{ marginTop: 8 }} onPress={() => openPaySheet(a)}>
+                    Lương &amp; hoa hồng
+                  </AppButton>
+                )}
+                {resetInfo?.id === a.id && (
+                  <TouchableOpacity onPress={() => copyPassword(resetInfo.password)} hitSlop={6}>
+                    <Text selectable style={[styles.resetText, { color: c.primary }]}>
+                      Mật khẩu mới: <Text style={styles.resetPw}>{resetInfo.password}</Text>
+                      {"  "}
+                      <Text style={{ color: copied ? c.success : c.inkSoft, fontWeight: "700" }}>
+                        {copied ? "✓ đã copy" : "(bấm để copy)"}
+                      </Text>
+                    </Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            )}
           </View>
         ))}
       </ScrollView>
 
+      {/* Nút nổi mở form — mẫu 10: pill trắng chữ terracotta, góc phải dưới */}
+      <TouchableOpacity
+        activeOpacity={0.85}
+        style={[styles.fab, { backgroundColor: c.card }]}
+        onPress={() => {
+          closeAllSheets();
+          setSheetError("");
+          setSheetOpen(true);
+        }}
+      >
+        <Text style={[styles.fabText, { color: c.primary }]}>+ Tài khoản mới</Text>
+      </TouchableOpacity>
+
+      <FormSheet visible={sheetOpen} title={`Tài khoản ${ROLE_LABEL[role]} mới`} onClose={() => setSheetOpen(false)}>
+        <SectionLabel style={styles.sheetLabel}>Họ và tên</SectionLabel>
+        <TextInput value={form.name} onChangeText={(v) => setForm((f) => ({ ...f, name: v }))} style={inputStyle} />
+        <SectionLabel style={styles.sheetLabel}>Số điện thoại</SectionLabel>
+        <TextInput
+          value={form.phone}
+          onChangeText={(v) => setForm((f) => ({ ...f, phone: v }))}
+          keyboardType="phone-pad"
+          style={inputStyle}
+        />
+        {role === "trainer" && (
+          <>
+            {/* her-19: chuyên môn CHỌN từ danh mục bộ môn — HLV chỉ được giao lớp đúng chuyên môn */}
+            <SectionLabel style={styles.sheetLabel}>Chuyên môn (chọn 1 hoặc nhiều)</SectionLabel>
+            <View style={styles.chipWrap}>
+              {disciplines.map(([key, label]) => {
+                const on = form.specialties.includes(key);
+                return (
+                  <TouchableOpacity
+                    key={key}
+                    onPress={() => setForm((f) => ({
+                      ...f,
+                      specialties: on ? f.specialties.filter((k) => k !== key) : [...f.specialties, key],
+                    }))}
+                    style={[styles.chip, { borderColor: c.line }, on && { backgroundColor: c.primaryTint, borderColor: c.primaryTint }]}
+                  >
+                    <Text style={[styles.chipText, { color: on ? c.primary : c.ink }]}>{label}</Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          </>
+        )}
+        <SectionLabel style={styles.sheetLabel}>Mật khẩu ban đầu (tối thiểu 6 ký tự)</SectionLabel>
+        <TextInput
+          value={form.password}
+          onChangeText={(v) => setForm((f) => ({ ...f, password: v }))}
+          placeholder="Người dùng nên đổi sau lần đăng nhập đầu"
+          placeholderTextColor={c.tabInactive}
+          autoCapitalize="none"
+          autoCorrect={false}
+          style={inputStyle}
+        />
+        {!!sheetError && <Text style={[styles.sheetError, { color: c.danger }]}>{sheetError}</Text>}
+        <AppButton style={{ marginTop: 22 }} disabled={busy} onPress={create}>
+          {busy ? "Đang tạo..." : "Tạo tài khoản"}
+        </AppButton>
+      </FormSheet>
+
+      <ConfirmSheet
+        visible={!!confirmAction}
+        busy={busy}
+        title={
+          confirmAction?.kind === "reset"
+            ? "Cấp lại mật khẩu?"
+            : confirmAction?.acc?.isActive
+              ? "Khoá tài khoản?"
+              : "Mở khoá tài khoản?"
+        }
+        message={
+          confirmAction?.kind === "reset"
+            ? `Cấp mật khẩu mới cho "${confirmAction?.acc?.name}"? Mật khẩu cũ sẽ hết hiệu lực.`
+            : confirmAction?.acc?.isActive
+              ? `Bạn chắc chắn muốn khoá tài khoản "${confirmAction?.acc?.name}"?`
+              : `Mở khoá tài khoản "${confirmAction?.acc?.name}"?`
+        }
+        confirmLabel={confirmAction?.kind === "reset" ? "Cấp mật khẩu mới" : confirmAction?.acc?.isActive ? "Khoá" : "Mở khoá"}
+        onConfirm={runConfirmed}
+        onClose={() => setConfirmAction(null)}
+      />
+
+      {!!pkgCustomer && (
+        <CustomerPackagesModal customer={pkgCustomer} onClose={() => setPkgCustomer(null)} />
+      )}
+
+      <FormSheet
+        visible={!!paySheet}
+        title={`Lương & hoa hồng — ${paySheet?.name || ""}`}
+        onClose={() => { if (!busy) setPaySheet(null); }}
+      >
+        {!!payEffective && (
+          <Text style={{ fontSize: 11.5, marginTop: 6, color: c.inkSoft }}>
+            Mức hiện hành áp dụng từ {new Date(payEffective).toLocaleDateString("vi-VN")}. Lưu sẽ tạo mức MỚI áp dụng từ thời điểm lưu — các buổi đã dạy trước đó giữ mức cũ.
+          </Text>
+        )}
+        <SectionLabel style={styles.sheetLabel}>Lương cứng (VND/tháng)</SectionLabel>
+        <MoneyInput
+          value={payForm.baseSalary}
+          onChangeValue={(v) => setPayForm((f) => ({ ...f, baseSalary: v }))}
+          style={inputStyle}
+        />
+        {[
+          ["Lớp nhóm", "groupAmount", "groupPer"],
+          ["PT 1:1", "pt1Amount", null],
+          ["PT nhóm", "ptGroupAmount", "ptGroupPer"],
+        ].map(([label, amountKey, perKey]) => (
+          <View key={amountKey}>
+            <SectionLabel style={styles.sheetLabel}>{`Hoa hồng ${label} (VND)`}</SectionLabel>
+            <View style={{ flexDirection: "row", gap: 14, alignItems: "flex-end" }}>
+              <MoneyInput
+                value={payForm[amountKey]}
+                onChangeValue={(v) => setPayForm((f) => ({ ...f, [amountKey]: v }))}
+                style={[inputStyle, { flex: 1 }]}
+              />
+              {perKey ? (
+                <View style={{ flexDirection: "row", gap: 6 }}>
+                  {[["session", "Theo buổi"], ["attendee", "Theo khách"]].map(([k, l]) => (
+                    <TouchableOpacity
+                      key={k}
+                      onPress={() => setPayForm((f) => ({ ...f, [perKey]: k }))}
+                      style={[styles.perChip, { borderColor: c.line }, payForm[perKey] === k && { backgroundColor: c.primaryTint, borderColor: c.primaryTint }]}
+                    >
+                      <Text style={[styles.perChipText, { color: payForm[perKey] === k ? c.primary : c.ink }]}>{l}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              ) : (
+                <Text style={{ fontSize: 11.5, paddingBottom: 10, color: c.inkSoft }}>theo buổi</Text>
+              )}
+            </View>
+          </View>
+        ))}
+        {!!payError && <Text style={[styles.sheetError, { color: c.danger }]}>{payError}</Text>}
+        <AppButton style={{ marginTop: 22 }} disabled={busy} onPress={savePayRates}>
+          {busy ? "Đang lưu..." : "Lưu mức thù lao"}
+        </AppButton>
+      </FormSheet>
+
       {!!toast && (
-        <View style={[styles.toast, toast.isError && styles.toastError]}>
+        <View style={[styles.toast, { backgroundColor: toast.isError ? c.danger : c.primary }]}>
           <Feather name={toast.isError ? "alert-circle" : "check"} size={14} color="#fff" />
           <Text style={styles.toastText}>{toast.msg}</Text>
         </View>
@@ -218,40 +558,77 @@ export default function AccountsScreen() {
 }
 
 const styles = StyleSheet.create({
-  tabs: { flexDirection: "row", marginHorizontal: 20, marginBottom: 14, backgroundColor: "#EFEAE1", borderRadius: 12, padding: 4 },
-  tabBtn: { flex: 1, paddingVertical: 9, borderRadius: 9, alignItems: "center" },
-  tabBtnActive: { backgroundColor: COLORS.card },
-  tabLabel: { fontWeight: "700", fontSize: 12.5, color: COLORS.inkSoft },
-  errorText: { marginHorizontal: 20, marginBottom: 10, color: COLORS.ink, fontSize: 12.5 },
-  formCard: { backgroundColor: COLORS.card, borderRadius: 16, padding: 14, gap: 4 },
-  formTitle: { fontWeight: "800", fontSize: 14, color: COLORS.ink, marginBottom: 6 },
-  label: { fontSize: 11.5, color: COLORS.inkSoft, fontWeight: "700", marginTop: 8, marginBottom: 5 },
-  input: {
+  tabs: { flexDirection: "row", gap: 20, borderBottomWidth: 1, marginTop: 14 },
+  // her-23: ô tìm theo tên/SĐT — cùng kiểu với màn Lịch tập
+  searchBox: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    borderRadius: 999,
     borderWidth: 1.5,
-    borderColor: COLORS.line,
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 9,
-    fontSize: 13.5,
-    color: COLORS.ink,
-    marginBottom: 10,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    marginTop: 4,
   },
-  card: { backgroundColor: COLORS.card, borderRadius: 16, padding: 14 },
-  cardTitle: { fontWeight: "800", fontSize: 14, color: COLORS.ink },
-  cardMeta: { fontSize: 12, color: COLORS.inkSoft, marginTop: 3 },
+  searchInput: { flex: 1, fontSize: 13.5 },
+  tabBtn: { paddingBottom: 9 },
+  tabLabel: { fontSize: 13, fontWeight: "700" },
+  error: { fontSize: 12.5, marginHorizontal: 22, marginTop: 10, fontWeight: "700" },
+  empty: { fontSize: 13, marginTop: 18 },
+  row: { flexDirection: "row", alignItems: "center", gap: 14, paddingVertical: 13 },
+  avatar: { width: 40, height: 40, borderRadius: 20, alignItems: "center", justifyContent: "center" },
+  avatarText: { fontSize: 15, fontWeight: "800" },
+  rowTitle: { fontSize: 13.5, fontWeight: "700" },
+  rowMeta: { fontSize: 11.5, marginTop: 2 },
+  status: { fontSize: 12, fontWeight: "700" },
+  actionCard: {
+    borderRadius: 16,
+    padding: 14,
+    marginBottom: 12,
+    shadowColor: "#000",
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 3,
+  },
+  actionName: { fontSize: 13.5, fontWeight: "800" },
+  resetPw: { fontSize: 15, fontWeight: "900", letterSpacing: 1 },
+  resetText: { fontSize: 12.5, fontWeight: "700", marginTop: 12, lineHeight: 18 },
+  fab: {
+    position: "absolute",
+    right: 22,
+    bottom: 20,
+    borderRadius: 999,
+    paddingVertical: 13,
+    paddingHorizontal: 18,
+    shadowColor: "#000",
+    shadowOpacity: 0.14,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 5,
+  },
+  fabText: { fontSize: 13, fontWeight: "800" },
+  perChip: { paddingVertical: 7, paddingHorizontal: 11, borderRadius: 999, borderWidth: 1.5, marginBottom: 6 },
+  perChipText: { fontSize: 11.5, fontWeight: "700" },
+  sheetLabel: { marginTop: 12 },
+  // Ô chọn chuyên môn — cùng kiểu chip với sheet "Mở hồ sơ HLV" (ProfileScreen)
+  chipWrap: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 8 },
+  chip: { paddingVertical: 8, paddingHorizontal: 14, borderRadius: 999, borderWidth: 1.5 },
+  chipText: { fontSize: 12.5, fontWeight: "700" },
+  sheetError: { fontSize: 12.5, fontWeight: "700", marginTop: 14 },
+  // Ô nhập kiểu gạch chân theo bản thiết kế
+  input: { borderBottomWidth: 1.5, paddingVertical: 8, fontSize: 15, marginTop: 2 },
   toast: {
     position: "absolute",
-    bottom: 90,
-    left: 20,
-    right: 20,
-    backgroundColor: COLORS.ink,
-    borderRadius: 12,
-    paddingVertical: 10,
-    paddingHorizontal: 14,
+    bottom: 80,
+    left: 22,
+    right: 22,
+    borderRadius: 999,
+    paddingVertical: 11,
+    paddingHorizontal: 16,
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
   },
   toastText: { color: "#fff", fontSize: 12.5, flex: 1 },
-  toastError: { backgroundColor: "#8C3A3A" },
 });

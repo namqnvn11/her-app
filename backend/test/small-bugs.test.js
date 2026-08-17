@@ -85,6 +85,9 @@ before(async () => {
   });
   await Promise.all([waitHealthy(A), waitHealthy(B)]);
   await mongoose.connect(URI_A);
+  // her-19: suite này test các bất biến CŨ với coach bất kỳ — gỡ ràng buộc chuyên môn của
+  // seed (specialties rỗng = hồ sơ cũ, được phép dạy mọi lớp); luật chuyên môn có test riêng.
+  await mongoose.connection.db.collection("trainers").updateMany({}, { $set: { specialties: [] } });
 });
 
 after(async () => {
@@ -138,12 +141,20 @@ test("L10: server MIN_CANCEL_HOURS=2 — hủy booking cách 2h30 THÀNH CÔNG, 
   // slot sát giờ hiện tại qua API tuỳ thời điểm chạy; test này chỉ kiểm tra LUẬT HỦY.
   const connB = await mongoose.createConnection(URI_B).asPromise();
   const trainerB = await connB.collection("trainers").findOne({});
+  // H7: đặt PT cần gói loại pt — chèn cho Thảo Vy 1 gói PT trên DB B
+  const vyB = await connB.collection("users").findOne({ phone: "0912345678" });
+  await connB.collection("packages").insertOne({
+    userId: vyB._id, name: "PT test L10", serviceType: "pt", price: 1,
+    totalSessions: 10, usedSessions: 0, activatedAt: new Date(), expiresAt: null,
+    pausedAt: null, paymentMethod: "cash", paidAmount: 1,
+  });
   const makeSlot = async (startH, endH) => {
     const r = await connB.collection("ptslots").insertOne({
       trainerId: trainerB._id,
       startAt: hoursFromNow(startH),
       endAt: hoursFromNow(endH),
-      isBooked: false,
+      capacity: 1,
+      bookedCount: 0,
     });
     return r.insertedId.toString();
   };
@@ -254,14 +265,14 @@ test("Review: capacity âm/chữ bị chặn khi tạo lớp; PATCH lớp không
 
   const negative = await call(A, "/schedule/classes", {
     method: "POST", token: staff.token,
-    body: { name: "X", coachId: trainerId, startAt: hoursFromNow(170), endAt: hoursFromNow(171), capacity: -5 },
+    body: { name: "X", serviceType: "pilates", coachId: trainerId, startAt: hoursFromNow(170), endAt: hoursFromNow(171), capacity: -5 },
   });
   assert.equal(negative.status, 400);
   assert.match(negative.data.error, /Sức chứa/);
 
   const created = await call(A, "/schedule/classes", {
     method: "POST", token: staff.token,
-    body: { name: "Lop de patch", coachId: trainerId, startAt: hoursFromNow(172), endAt: hoursFromNow(173) },
+    body: { name: "Lop de patch", serviceType: "pilates", coachId: trainerId, startAt: hoursFromNow(172), endAt: hoursFromNow(173) },
   });
   assert.equal(created.status, 201);
   const id = created.data.class._id;
@@ -295,7 +306,7 @@ test("L13: gọi thẳng API tạo khung giờ quá khứ / khoảng giờ ngư�
   const past = await call(A, "/schedule/classes", {
     method: "POST",
     token: staff.token,
-    body: { name: "Lop qua khu", coachId: trainerId, startAt: hoursFromNow(-24), endAt: hoursFromNow(-23) },
+    body: { name: "Lop qua khu", serviceType: "pilates", coachId: trainerId, startAt: hoursFromNow(-24), endAt: hoursFromNow(-23) },
   });
   assert.equal(past.status, 400);
   assert.match(past.data.error, /quá khứ/);
@@ -311,7 +322,7 @@ test("L13: gọi thẳng API tạo khung giờ quá khứ / khoảng giờ ngư�
   const valid = await call(A, "/schedule/classes", {
     method: "POST",
     token: staff.token,
-    body: { name: "Lop hop le", coachId: trainerId, startAt: hoursFromNow(175), endAt: hoursFromNow(176) },
+    body: { name: "Lop hop le", serviceType: "pilates", coachId: trainerId, startAt: hoursFromNow(175), endAt: hoursFromNow(176) },
   });
   assert.equal(valid.status, 201, "khung giờ tương lai hợp lệ vẫn tạo được bình thường");
 });
@@ -412,14 +423,15 @@ test("Hồi quy: 4 role đăng nhập, khách đặt lớp group + hủy, buổi
     await login(A, phone);
   }
 
-  const customer = await login(A, "0912345678"); // Thảo Vy — 1 gói duy nhất nên hoàn buổi phải đúng
+  const customer = await login(A, "0912345678"); // Thảo Vy — gói yoga (card /me/package trả gói này)
   const before = (await call(A, "/me/package", { token: customer.token })).data.package.usedSessions;
 
-  // Duyệt từ lớp xa nhất (chắc chắn >3h và ít nguy cơ trùng giờ lịch có sẵn), lấy lớp đặt được đầu tiên
+  // Duyệt từ lớp xa nhất (chắc chắn >3h và ít nguy cơ trùng giờ lịch có sẵn), lấy lớp đặt được đầu tiên.
+  // Chỉ lấy lớp YOGA để buổi trừ vào đúng gói mà /me/package đang hiển thị (H7 — Thảo Vy có 2 gói)
   const classes = (await call(A, "/classes", { token: customer.token })).data.classes.reverse();
   let booked = null;
   for (const c of classes) {
-    if (c.spotsLeft === 0) continue;
+    if (c.spotsLeft === 0 || c.serviceType !== "yoga") continue;
     const r = await call(A, "/bookings", { method: "POST", token: customer.token, body: { type: "group", classId: c.id } });
     if (r.status === 201) { booked = r.data.booking; break; }
   }

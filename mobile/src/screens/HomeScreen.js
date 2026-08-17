@@ -2,35 +2,69 @@ import { useState, useCallback } from "react";
 import { View, Text, ScrollView, TouchableOpacity, StyleSheet, RefreshControl } from "react-native";
 import { useFocusEffect, useNavigation } from "@react-navigation/native";
 import { Feather } from "@expo/vector-icons";
-import TopBar from "../components/TopBar";
-import Pill from "../components/Pill";
-import Ring from "../components/Ring";
+import HeaderBlock from "../components/HeaderBlock";
+import SectionLabel from "../components/SectionLabel";
 import { useAuth } from "../context/AuthContext";
 import { api } from "../api/client";
-import { COLORS } from "../theme";
+import { syncReminders } from "../utils/reminders";
+import { useTheme } from "../theme";
 
 function fmtDate(d) {
-  return new Date(d).toLocaleDateString("vi-VN", { day: "2-digit", month: "2-digit", year: "numeric" });
+  const date = new Date(d);
+  const dd = String(date.getDate()).padStart(2, "0");
+  const mm = String(date.getMonth() + 1).padStart(2, "0");
+  return `${dd}/${mm}/${date.getFullYear()}`;
 }
 function fmtDateTime(d) {
-  return new Date(d).toLocaleString("vi-VN", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+  const date = new Date(d);
+  const dd = String(date.getDate()).padStart(2, "0");
+  const mm = String(date.getMonth() + 1).padStart(2, "0");
+  const time = date.toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" });
+  return `${dd}/${mm} ${time}`;
+}
+function daysLeft(d) {
+  if (!d) return "∞"; // gói không thời hạn (Q3)
+  return Math.max(Math.ceil((new Date(d).getTime() - Date.now()) / 86400000), 0);
 }
 
 export default function HomeScreen() {
   const { user } = useAuth();
   const navigation = useNavigation();
+  const { c } = useTheme();
   const [pkg, setPkg] = useState(null);
-  const [next, setNext] = useState(null);
+  const [bookings, setBookings] = useState([]);
+  // Trạng thái gói theo nhóm cho 2 ô tắt: null = chưa biết (chưa khoá ô — server vẫn là
+  // chốt chặn thật) | "ok" | "paused" (có gói nhưng đang bảo lưu) | "none"
+  const [ptState, setPtState] = useState(null);
+  const [groupState, setGroupState] = useState(null);
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState("");
 
   const load = useCallback(async () => {
-    setLoading(true); // để RefreshControl hiện spinner đúng lúc kéo làm mới
+    setLoading(true);
     try {
       setErrorMsg("");
-      const [pkgRes, bookingsRes] = await Promise.all([api.get("/me/package"), api.get("/me/bookings")]);
+      const [pkgRes, pkgsRes, bookingsRes] = await Promise.all([
+        api.get("/me/package"),
+        api.get("/me/packages"),
+        api.get("/me/bookings"),
+      ]);
+      // Mục 9: đặt lại nhắc-1-tiếng theo lịch mới nhất (no-op trên web)
+      syncReminders((bookingsRes.bookings || []).filter((b) => b.status === "booked"));
       setPkg(pkgRes.package);
-      setNext(bookingsRes.bookings[0] || null);
+      // her-20: không có gói phù hợp thì ô tắt phải mờ + nói rõ lý do, không lặng lẽ
+      // nhảy sang tab khác gây nhầm lẫn (góp ý 16/08; review N2/N3: phân biệt gói đang
+      // BẢO LƯU với không có gói, và gate CẢ HAI chiều Group/PT)
+      const pkgs = pkgsRes.packages || [];
+      const stateOf = (isPT) => {
+        const mine = pkgs.filter((p) => (p.serviceType === "pt") === isPT);
+        if (mine.some((p) => p.status === "active")) return "ok";
+        if (mine.some((p) => p.status === "paused")) return "paused";
+        return "none";
+      };
+      setPtState(stateOf(true));
+      setGroupState(stateOf(false));
+      setBookings(bookingsRes.bookings || []);
     } catch (err) {
       setErrorMsg(err.message);
     } finally {
@@ -44,117 +78,136 @@ export default function HomeScreen() {
     }, [load])
   );
 
+  // Gói không giới hạn buổi: totalSessions null (Q3) — hiện ∞ thay vì NaN
+  const unlimited = pkg && pkg.totalSessions == null;
+  const left = pkg && !unlimited ? Math.max(pkg.totalSessions - pkg.usedSessions, 0) : 0;
+
   return (
     <ScrollView
-      style={styles.wrap}
+      style={{ flex: 1, backgroundColor: c.bg }}
       contentContainerStyle={{ paddingBottom: 40 }}
-      refreshControl={<RefreshControl refreshing={loading} onRefresh={load} tintColor={COLORS.ink} />}
+      refreshControl={<RefreshControl refreshing={loading} onRefresh={load} tintColor={c.primary} />}
     >
-      <TopBar title={`Chào ${user?.name || ""} 👋`} sub="Chúc bạn một buổi tập tràn năng lượng" />
+      <HeaderBlock
+        eyebrow={new Date().toLocaleDateString("vi-VN", { weekday: "long", day: "2-digit", month: "2-digit" })}
+        title={`Chào ${user?.name || ""}`}
+        stats={[
+          { value: pkg ? (unlimited ? "∞" : left) : "—", label: "buổi còn lại" },
+          { value: pkg ? daysLeft(pkg.expiresAt) : "—", label: "ngày còn hạn" },
+          { value: bookings.length, label: "lịch sắp tới" },
+        ]}
+        progress={pkg && !unlimited && pkg.totalSessions > 0 ? pkg.usedSessions / pkg.totalSessions : undefined}
+        footnote={
+          pkg
+            ? unlimited
+              ? `${pkg.name} · không giới hạn buổi`
+              : `${pkg.name} · đã dùng ${pkg.usedSessions}/${pkg.totalSessions}`
+            : undefined
+        }
+      />
 
-      {!!errorMsg && <Text style={styles.errorText}>{errorMsg}</Text>}
+      <View style={{ paddingHorizontal: 22 }}>
+        {!!errorMsg && <Text style={[styles.error, { color: c.danger }]}>{errorMsg}</Text>}
 
-      {pkg ? (
-        <View style={styles.card}>
-          <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" }}>
-            <View style={{ flex: 1 }}>
-              <Pill tone="brass">GÓI ĐANG DÙNG</Pill>
-              <Text style={styles.packageName}>{pkg.name}</Text>
-              <Text style={styles.packageMeta}>
-                Kích hoạt {fmtDate(pkg.activatedAt)} · Hết hạn {fmtDate(pkg.expiresAt)}
-              </Text>
-              <Text style={styles.packagePrice}>{pkg.price.toLocaleString("vi-VN")}đ</Text>
+        <SectionLabel>Sắp tới</SectionLabel>
+        {bookings.length === 0 && !loading && (
+          <Text style={[styles.empty, { color: c.inkSoft }]}>Chưa có lịch nào sắp tới.</Text>
+        )}
+        {bookings.slice(0, 3).map((b) => (
+          <View key={b.id} style={[styles.row, { borderBottomColor: c.hairline }]}>
+            <View style={[styles.badge, { backgroundColor: c.primaryTint }]}>
+              <Text style={[styles.badgeText, { color: c.primary }]}>{b.type === "pt" ? "PT" : "GR"}</Text>
             </View>
-            <Ring used={pkg.usedSessions} total={pkg.totalSessions} size={96} />
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.rowTitle, { color: c.ink }]}>{b.title}</Text>
+              <Text style={[styles.rowMeta, { color: c.inkSoft }]}>
+                {b.coach} · {fmtDateTime(b.startAt)}
+              </Text>
+            </View>
+            <Feather name="chevron-right" size={16} color={c.inkSoft} />
           </View>
-        </View>
-      ) : (
-        !loading && (
-          <View style={styles.card}>
-            <Text style={{ color: COLORS.inkSoft, fontSize: 13 }}>Bạn chưa có gói tập còn hiệu lực.</Text>
-          </View>
-        )
-      )}
+        ))}
 
-      <Text style={styles.sectionTitle}>Lịch sắp tới</Text>
-      {next ? (
-        <View style={styles.rowCard}>
-          <View style={styles.iconBubble}>
-            <Feather name={next.type === "pt" ? "activity" : "users"} size={18} color={COLORS.ink} />
+        {pkg && pkg.status === "paused" && (
+          <View style={[styles.note, { backgroundColor: c.primarySoft }]}>
+            <Text style={[styles.noteText, { color: c.primary }]}>
+              Gói của bạn đang bảo lưu — ghé quầy lễ tân để mở lại, thời hạn sẽ được cộng bù.
+            </Text>
           </View>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.rowTitle}>{next.title}</Text>
-            <Text style={styles.rowMeta}>{next.coach} · {fmtDateTime(next.startAt)}</Text>
+        )}
+        {pkg && pkg.status !== "paused" && (
+          <View style={[styles.note, { backgroundColor: c.primarySoft }]}>
+            <Text style={[styles.noteText, { color: c.primary }]}>
+              {unlimited ? "Gói của bạn không giới hạn buổi" : `Gói của bạn còn ${left} buổi`}
+              {pkg.expiresAt ? `, hết hạn ${fmtDate(pkg.expiresAt)}. Ghé quầy để gia hạn sớm nhé.` : " và không có thời hạn."}
+            </Text>
           </View>
-          <Feather name="chevron-right" size={16} color={COLORS.beigeDark} />
-        </View>
-      ) : (
-        <Text style={{ marginHorizontal: 20, color: COLORS.inkSoft, fontSize: 13 }}>
-          Chưa có lịch nào sắp tới.
-        </Text>
-      )}
+        )}
+        {!pkg && !loading && (
+          <View style={[styles.note, { backgroundColor: c.primarySoft }]}>
+            <Text style={[styles.noteText, { color: c.primary }]}>
+              Bạn chưa có gói tập còn hiệu lực — liên hệ quầy lễ tân để mua gói.
+            </Text>
+          </View>
+        )}
 
-      <Text style={styles.sectionTitle}>Đặt lịch nhanh</Text>
-      <View style={{ flexDirection: "row", marginHorizontal: 20, gap: 12 }}>
-        <TouchableOpacity
-          activeOpacity={0.85}
-          style={[styles.quickCard, { backgroundColor: COLORS.ink }]}
-          onPress={() => navigation.navigate("Dat_lich", { initialTab: "group" })}
-        >
-          <Feather name="users" size={20} color="#fff" />
-          <Text style={[styles.quickTitle, { color: "#fff" }]}>Lớp Group</Text>
-          <Text style={[styles.quickSub, { color: "#D8D3C7" }]}>Yoga, Pilates, Gym</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          activeOpacity={0.85}
-          style={[styles.quickCard, { backgroundColor: "#EFE9DD" }]}
-          onPress={() => navigation.navigate("Dat_lich", { initialTab: "pt" })}
-        >
-          <Feather name="activity" size={20} color={COLORS.ink} />
-          <Text style={[styles.quickTitle, { color: COLORS.ink }]}>PT 1:1</Text>
-          <Text style={[styles.quickSub, { color: COLORS.inkSoft }]}>Chọn HLV yêu thích</Text>
-        </TouchableOpacity>
+        <View style={styles.quickRow}>
+          {(() => {
+            const groupOff = groupState === "none" || groupState === "paused";
+            const ptOff = ptState === "none" || ptState === "paused";
+            return (
+              <>
+                <TouchableOpacity
+                  activeOpacity={groupOff ? 1 : 0.85}
+                  disabled={groupOff}
+                  style={[styles.quick, { backgroundColor: c.primary }, groupOff && { opacity: 0.45 }]}
+                  onPress={() => navigation.navigate("Dat_lich", { initialTab: "group" })}
+                >
+                  <Text style={[styles.quickTitle, { color: c.primaryOn }]}>Đặt lớp Group</Text>
+                  <Text style={[styles.quickSub, { color: c.primaryOnSoft }]}>
+                    {groupState === "paused"
+                      ? "Gói đang bảo lưu — ghé quầy"
+                      : groupState === "none" ? "Cần gói bộ môn — ghé quầy" : "Pilates · Yoga · Gym"}
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  activeOpacity={ptOff ? 1 : 0.85}
+                  disabled={ptOff}
+                  style={[
+                    styles.quick,
+                    { borderWidth: 1.5, borderColor: c.primary },
+                    ptOff && { opacity: 0.45, borderColor: c.line },
+                  ]}
+                  onPress={() => navigation.navigate("Dat_lich", { initialTab: "pt" })}
+                >
+                  <Text style={[styles.quickTitle, { color: ptOff ? c.inkSoft : c.primary }]}>Đặt PT</Text>
+                  <Text style={[styles.quickSub, { color: c.inkSoft }]}>
+                    {ptState === "paused"
+                      ? "Gói PT đang bảo lưu — ghé quầy"
+                      : ptState === "none" ? "Cần gói PT — ghé quầy" : "Chọn HLV"}
+                  </Text>
+                </TouchableOpacity>
+              </>
+            );
+          })()}
+        </View>
       </View>
     </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
-  wrap: { flex: 1, backgroundColor: COLORS.bg },
-  errorText: { marginHorizontal: 20, marginBottom: 10, color: COLORS.ink, fontSize: 12.5 },
-  card: {
-    marginHorizontal: 20,
-    backgroundColor: COLORS.card,
-    borderRadius: 20,
-    padding: 18,
-    shadowColor: "#2B2A28",
-    shadowOpacity: 0.06,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 6 },
-    elevation: 2,
-  },
-  packageName: { fontSize: 17, fontWeight: "800", color: COLORS.ink, marginTop: 8 },
-  packageMeta: { fontSize: 12, color: COLORS.inkSoft, marginTop: 4 },
-  packagePrice: { fontSize: 13, color: COLORS.ink, marginTop: 10, fontWeight: "700" },
-  sectionTitle: { marginHorizontal: 20, marginTop: 22, marginBottom: 8, fontSize: 13, fontWeight: "800", color: COLORS.ink },
-  rowCard: {
-    marginHorizontal: 20,
-    backgroundColor: COLORS.card,
-    borderRadius: 16,
-    padding: 14,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-    shadowColor: "#2B2A28",
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 1,
-  },
-  iconBubble: { width: 44, height: 44, borderRadius: 12, backgroundColor: COLORS.beige, alignItems: "center", justifyContent: "center" },
-  rowTitle: { fontSize: 13.5, fontWeight: "700", color: COLORS.ink },
-  rowMeta: { fontSize: 12, color: COLORS.inkSoft, marginTop: 2 },
-  quickCard: { flex: 1, borderRadius: 16, padding: 16 },
-  quickTitle: { fontWeight: "800", fontSize: 13, marginTop: 8 },
-  quickSub: { fontSize: 11.5, marginTop: 2 },
+  error: { fontSize: 12.5, marginTop: 14, fontWeight: "700" },
+  empty: { fontSize: 13, marginTop: 12 },
+  row: { flexDirection: "row", alignItems: "center", gap: 14, paddingVertical: 14, borderBottomWidth: 1 },
+  badge: { width: 44, height: 44, borderRadius: 12, alignItems: "center", justifyContent: "center" },
+  badgeText: { fontSize: 12, fontWeight: "800" },
+  rowTitle: { fontSize: 13.5, fontWeight: "700" },
+  rowMeta: { fontSize: 11.5, marginTop: 2 },
+  note: { borderRadius: 12, paddingVertical: 12, paddingHorizontal: 14, marginTop: 16 },
+  noteText: { fontSize: 12, lineHeight: 18, fontWeight: "500" },
+  quickRow: { flexDirection: "row", gap: 10, marginTop: 16 },
+  quick: { flex: 1, borderRadius: 14, padding: 14 },
+  quickTitle: { fontSize: 13, fontWeight: "800" },
+  quickSub: { fontSize: 11, marginTop: 2 },
 });

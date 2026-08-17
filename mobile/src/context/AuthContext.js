@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useState, useCallback, useRef } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { api, setAuthToken, setSessionInvalidHandler } from "../api/client";
+import { cancelAllReminders } from "../utils/reminders";
 
 const AuthContext = createContext(null);
 const STORAGE_KEY = "her_app_token";
@@ -25,6 +26,8 @@ export function AuthProvider({ children }) {
           setToken(saved);
           setUser(user);
           setConfig(config || null);
+          // Lễ tân/admin không dùng nhắc lịch — dọn thông báo còn sót của người dùng trước (B1)
+          if (user.role === "reception" || user.role === "admin") cancelAllReminders();
         } catch (err) {
           // Chỉ xoá token khi server thật sự từ chối (401/403 — hết hạn/bị khoá).
           // Lỗi mạng (không có status) thì giữ token để lần mở app sau còn dùng được.
@@ -44,6 +47,8 @@ export function AuthProvider({ children }) {
   const login = useCallback(async (phone, password) => {
     try {
       const { token, user, config } = await api.post("/auth/login", { phone, password });
+      // Đổi tài khoản trên cùng máy: xoá nhắc của người trước — không nhắc lịch "ma" (review B1)
+      cancelAllReminders();
       await AsyncStorage.setItem(STORAGE_KEY, token);
       setAuthToken(token);
       tokenRef.current = token;
@@ -57,6 +62,7 @@ export function AuthProvider({ children }) {
   }, []);
 
   const logout = useCallback(async () => {
+    cancelAllReminders(); // máy không được tiếp tục nhắc lịch của người đã đăng xuất (B1)
     await AsyncStorage.removeItem(STORAGE_KEY);
     setAuthToken(null);
     tokenRef.current = null;

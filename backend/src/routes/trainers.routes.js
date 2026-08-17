@@ -14,8 +14,10 @@ router.get("/", wrap(async (req, res) => {
   const to = new Date(Date.now() + 7 * 24 * 3600 * 1000);
 
   const trainers = await Trainer.find({ _id: { $nin: await lockedTrainerIds() } }).sort({ name: 1 });
+  // Trả CẢ slot đã kín (kèm capacity/bookedCount/full) — khách thấy hệ thống đông thay vì
+  // slot biến mất (góp ý 16/08); app hiện "Hết chỗ"/"Đã đặt"/"còn n chỗ", chỉ ẩn khi qua giờ
+  // hoặc sai bộ môn gói. PT nhóm (mục 6): capacity > 1.
   const slots = await PTSlot.find({
-    isBooked: false,
     startAt: { $gte: from, $lte: to },
   }).sort({ startAt: 1 });
 
@@ -26,6 +28,9 @@ router.get("/", wrap(async (req, res) => {
       id: s._id,
       startAt: s.startAt,
       endAt: s.endAt,
+      capacity: s.capacity,
+      bookedCount: s.bookedCount,
+      full: s.bookedCount >= s.capacity,
     });
   }
 
@@ -34,6 +39,7 @@ router.get("/", wrap(async (req, res) => {
       id: t._id,
       name: t.name,
       specialty: t.specialty,
+      specialties: t.specialties || [],
       rating: t.rating,
       slots: slotsByTrainer[t._id.toString()] || [],
     })),

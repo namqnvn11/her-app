@@ -3,6 +3,9 @@ const mongoose = require("mongoose");
 const gymClassSchema = new mongoose.Schema(
   {
     name: { type: String, required: true }, // "Pilates Reformer", "Vinyasa Yoga"...
+    // Bộ môn của lớp (H7): quyết định gói loại nào đặt được lớp này
+    // Bộ môn: validate ở route theo danh mục DB (her-19) — không enum cứng để thêm môn không phải sửa code
+    serviceType: { type: String, required: true },
     coachId: { type: mongoose.Schema.Types.ObjectId, ref: "Trainer", required: true },
     startAt: { type: Date, required: true },
     endAt: { type: Date, required: true },
