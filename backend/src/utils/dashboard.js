@@ -1,6 +1,5 @@
 const Booking = require("../models/Booking");
 const GymClass = require("../models/GymClass");
-const PTSlot = require("../models/PTSlot");
 const Package = require("../models/Package");
 const User = require("../models/User");
 const { computeMonth } = require("./payroll");
@@ -13,6 +12,8 @@ const { computeMonth } = require("./payroll");
 //   đông; bảng HLV (buổi/tỉ lệ đến/thù lao).
 // - Lễ tân: vận hành HÔM NAY — không doanh thu/lương (H5).
 // - HLV: lịch dạy CỦA MÌNH hôm nay/tuần/tháng.
+// her-35 (19/08): mọi buổi đều là LỚP có loại hình (1:1/1:2/1:4/1:8) — không còn khung PT
+// riêng, nên "lớp hôm nay"/"chỗ trống" gộp cả buổi 1:1, 1:2 vào chung số lớp.
 
 const fmtTime = (d) =>
   `${String(new Date(d).getHours()).padStart(2, "0")}:${String(new Date(d).getMinutes()).padStart(2, "0")}`;
@@ -27,7 +28,7 @@ function dayBounds(now) {
   return { from: new Date(now.getFullYear(), now.getMonth(), now.getDate()), to: new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1) };
 }
 
-// Buổi "có khách" của 1 HLV trong khoảng thời gian: gom booking active theo classId/slotId
+// Buổi "có khách" của 1 HLV trong khoảng thời gian: gom booking active theo LỚP (classId)
 async function trainerSessions(trainerId, from, to) {
   const bookings = await Booking.find({
     trainerId,
@@ -36,9 +37,12 @@ async function trainerSessions(trainerId, from, to) {
   }).populate("userId", "name").sort({ startAt: 1 });
   const byKey = new Map();
   for (const b of bookings) {
-    const key = `${b.type}:${(b.classId || b.slotId || b._id).toString()}`;
+    if (!b.classId) continue; // booking cũ/rác thiếu lớp — bỏ qua, không làm hỏng cả màn
+    const key = b.classId.toString();
     if (!byKey.has(key)) {
-      byKey.set(key, { title: b.title, startAt: b.startAt, endAt: b.endAt, classId: b.classId || null, customers: [] });
+      // her-38: trả kèm `format` để màn Tổng quan của HLV ghi dòng đậm "Tên · loại hình · HLV"
+      // (không cần trả coach — buổi này là của chính HLV đang xem, app tự ghép tên mình)
+      byKey.set(key, { title: b.title, format: b.format || "", startAt: b.startAt, endAt: b.endAt, classId: b.classId, customers: [] });
     }
     byKey.get(key).customers.push(b.userId?.name || "(đã xoá)");
   }
@@ -103,7 +107,7 @@ async function adminDashboard(month) {
     status: "completed",
     attendanceAt: { $ne: null },
     startAt: { $gte: from, $lt: to },
-  }).select("startAt trainerId type classId slotId");
+  }).select("startAt trainerId classId");
   const byHour = {};
   for (const b of attended) {
     const h = `${String(b.startAt.getHours()).padStart(2, "0")}:00`;
@@ -127,14 +131,13 @@ async function adminDashboard(month) {
     if (row._id.status === "completed") rec.came += row.n;
     else rec.missed += row.n;
   }
-  // Số BUỔI THẬT từng HLV (distinct lớp/khung có khách đến) — không phụ thuộc cách tính
+  // Số BUỔI THẬT từng HLV (distinct LỚP có khách đến) — không phụ thuộc cách tính
   // hoa hồng buổi/khách, để cột "X buổi" luôn là số buổi đứng lớp
   const sessionKeysByTrainer = {};
   for (const b of attended) {
+    if (!b.classId) continue; // booking cũ/rác thiếu lớp — không đếm thành buổi
     const tid = b.trainerId.toString();
-    (sessionKeysByTrainer[tid] = sessionKeysByTrainer[tid] || new Set()).add(
-      `${b.type}:${(b.classId || b.slotId || b._id).toString()}`
-    );
+    (sessionKeysByTrainer[tid] = sessionKeysByTrainer[tid] || new Set()).add(b.classId.toString());
   }
   const trainers = liveEntries.map((e) => {
     const att = attByTrainer[e.trainerId.toString()] || { came: 0, missed: 0 };
@@ -168,13 +171,11 @@ async function receptionDashboard(now = new Date()) {
     .sort({ startAt: 1 })
     .populate("coachId", "name");
   const bookingsToday = await Booking.countDocuments({ status: { $ne: "cancelled" }, startAt: { $gte: from, $lt: to } });
-  const slotsToday = await PTSlot.find({ startAt: { $gte: from, $lt: to } })
-    .sort({ startAt: 1 })
-    .populate("trainerId", "name");
-  // Chỗ trống chỉ tính buổi CHƯA KẾT THÚC — cuối ngày không cộng chỗ của lớp đã qua (review nhẹ)
-  const freeSlots =
-    classes.filter((c) => c.endAt > now).reduce((t, c) => t + Math.max(c.capacity - c.bookedCount, 0), 0) +
-    slotsToday.filter((sl) => sl.endAt > now).reduce((t, sl) => t + Math.max(sl.capacity - sl.bookedCount, 0), 0);
+  // Chỗ trống chỉ tính buổi CHƯA KẾT THÚC — cuối ngày không cộng chỗ của lớp đã qua (review nhẹ).
+  // her-35: gồm CẢ buổi 1:1/1:2 (trước đây là khung PT riêng) vì nay cũng là lớp.
+  const freeSlots = classes
+    .filter((c) => c.endAt > now)
+    .reduce((t, c) => t + Math.max(c.capacity - c.bookedCount, 0), 0);
 
   // Khách còn nợ — đếm theo KHÁCH, bỏ tài khoản ĐÃ KHOÁ (review V4: khách khoá không giao dịch nữa)
   const debtPkgs = await Package.find({ paidAmount: { $ne: null }, $expr: { $lt: ["$paidAmount", "$price"] } }).select("userId");
@@ -203,33 +204,24 @@ async function receptionDashboard(now = new Date()) {
     bookingsToday,
     freeSlots,
     unpaid,
-    // her-30 (chốt 17/08): CÓ KHÁCH mới hiển thị (cả lớp lẫn PT — khung/lớp trống thể hiện
-    // qua ô "chỗ trống"); hiện 4 buổi SẮP TỚI (đang diễn ra tính là sắp tới); cuối ngày còn
-    // dưới 4 buổi sắp tới thì hiện 4 buổi CUỐI CÙNG của ngày
+    // her-30 (chốt 17/08): CÓ KHÁCH mới hiển thị (lớp trống thể hiện qua ô "chỗ trống");
+    // hiện 4 buổi SẮP TỚI (đang diễn ra tính là sắp tới); cuối ngày còn dưới 4 buổi sắp tới
+    // thì hiện 4 buổi CUỐI CÙNG của ngày.
+    // her-35: 1 danh sách duy nhất — buổi 1:1/1:2 nay cũng là lớp, kèm `format` cho client.
     today: (() => {
-      const all = [
-        ...classes.filter((c) => c.bookedCount > 0).map((c) => ({
+      const all = classes
+        .filter((c) => c.bookedCount > 0)
+        .map((c) => ({
           startAt: c.startAt,
           endAt: c.endAt,
           time: fmtTime(c.startAt),
           title: c.name,
+          format: c.format,
           coach: c.coachId?.name || "",
           booked: c.bookedCount,
           capacity: c.capacity,
-        })),
-        // Buổi PT có khách cũng thuộc "Lịch hôm nay" (review nhẹ — trước đây chỉ lớp nhóm)
-        ...slotsToday
-          .filter((sl) => sl.bookedCount > 0)
-          .map((sl) => ({
-            startAt: sl.startAt,
-            endAt: sl.endAt,
-            time: fmtTime(sl.startAt),
-            title: sl.capacity > 1 ? "PT nhóm" : "PT 1:1",
-            coach: sl.trainerId?.name || "",
-            booked: sl.bookedCount,
-            capacity: sl.capacity,
-          })),
-      ].sort((a, b) => a.startAt - b.startAt);
+        }))
+        .sort((a, b) => a.startAt - b.startAt);
       const upcoming = all.filter((r) => r.endAt > now);
       const chosen = upcoming.length >= 4 ? upcoming.slice(0, 4) : all.slice(-4);
       return chosen.map(({ startAt, endAt, ...row }) => row);
@@ -255,9 +247,9 @@ async function trainerDashboard(trainerId, now = new Date()) {
   const weekMs = weekSessions.reduce((t, s) => t + (new Date(s.endAt) - new Date(s.startAt)), 0);
   const upcoming = todaySessions.filter((s) => new Date(s.endAt) > now);
   const next = upcoming[0]
-    ? { time: fmtTime(upcoming[0].startAt), title: upcoming[0].title, customers: upcoming[0].customers, classId: upcoming[0].classId || null }
+    ? { time: fmtTime(upcoming[0].startAt), title: upcoming[0].title, format: upcoming[0].format || "", customers: upcoming[0].customers, classId: upcoming[0].classId }
     : null;
-  const rest = upcoming.slice(1).map((s) => ({ time: fmtTime(s.startAt), title: s.title, sub: `${s.customers.length} khách` }));
+  const rest = upcoming.slice(1).map((s) => ({ time: fmtTime(s.startAt), title: s.title, format: s.format || "", sub: `${s.customers.length} khách` }));
 
   // Tỉ lệ Đến tháng này (điểm danh thật)
   const [came, missed] = await Promise.all([

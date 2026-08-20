@@ -7,11 +7,12 @@ const wrap = require("../utils/asyncHandler");
 const router = express.Router();
 router.use(requireAuth);
 
-// GET /api/classes -- các buổi group sắp tới còn mở đăng ký (7 ngày tới)
+// GET /api/classes -- các buổi sắp tới còn mở đăng ký (7 ngày tới).
+// her-35: mọi buổi đều là lớp, kèm loại hình 1:1 / 1:2 / 1:4 / 1:8.
 router.get("/", wrap(async (req, res) => {
   const from = new Date();
   const to = new Date(Date.now() + 7 * 24 * 3600 * 1000);
-  // Ẩn cả lớp Group của HLV có tài khoản bị khoá (không chỉ khung PT)
+  // Ẩn lớp của HLV có tài khoản bị khoá (H6)
   const classes = await GymClass.find({
     startAt: { $gte: from, $lte: to },
     coachId: { $nin: await lockedTrainerIds() },
@@ -24,6 +25,7 @@ router.get("/", wrap(async (req, res) => {
       id: c._id,
       name: c.name,
       serviceType: c.serviceType,
+      format: c.format, // her-35: loại hình buổi (1:1 / 1:2 / 1:4 / 1:8)
       coach: c.coachId?.name || "",
       startAt: c.startAt,
       endAt: c.endAt,

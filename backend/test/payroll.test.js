@@ -1,4 +1,6 @@
 // Test her-12 — Mục 7: Lương & hoa hồng HLV.
+// Cập nhật her-35 (19/08): hoa hồng theo LOẠI HÌNH buổi (1:1 / 1:2 / 1:4 / 1:8),
+// đọc thẳng snapshot `format` của booking — không còn PTSlot, không so chuỗi title.
 // Xem docs-her/testcase/testcase_her-12_payroll.md
 // DB riêng her_test_j (tự seed), server cổng 4181.
 
@@ -7,18 +9,17 @@ const assert = require("node:assert");
 const { spawn, spawnSync } = require("node:child_process");
 const path = require("node:path");
 const mongoose = require("mongoose");
-const bcrypt = require("bcryptjs");
 
 const ROOT = path.join(__dirname, "..");
 const URI = "mongodb://localhost:27017/her_test_j";
 const S = "http://localhost:4181/api";
 
 const Booking = require("../src/models/Booking");
-const PTSlot = require("../src/models/PTSlot");
 const GymClass = require("../src/models/GymClass");
 const Trainer = require("../src/models/Trainer");
 const TrainerRate = require("../src/models/TrainerRate");
 const User = require("../src/models/User");
+const { FORMAT_CAPACITY } = require("../src/utils/formats");
 
 let proc;
 const tokens = {};
@@ -61,49 +62,58 @@ const MONTH = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0"
 const dayOfMonth = (d, hour = 6) => new Date(now.getFullYear(), now.getMonth(), d, hour, 0, 0);
 const hoursFromNow = (h) => new Date(Date.now() + h * 3600 * 1000);
 
-// Fixture: 1 "buổi dạy" đã điểm danh — chèn DB trực tiếp để chủ động ngày giờ/trạng thái.
-// kind: "group" (lớp nhóm) | "pt1" (PT 1:1) | "ptGroup" (PT nhóm)
+// Lấy dòng của 1 HLV trong bảng lương
+const rowOf = (data, trainerId) =>
+  data.entries.find((x) => x.trainerId.toString() === trainerId.toString());
+// Tổng số đơn vị tính hoa hồng của mọi loại hình
+const totalUnits = (e) => Object.values(e.byFormat).reduce((s, f) => s + f.count, 0);
+
+// Fixture: 1 "buổi dạy" đã điểm danh — lớp THẬT + booking snapshot (serviceType/format),
+// chèn DB trực tiếp để chủ động ngày giờ/trạng thái.
 let seq = 0;
-async function makeSession({ trainerId = linhTrainerId, kind = "group", day = 10, attended = 1, absent = 0, attendanceAtNull = false, status = "completed" } = {}) {
+async function makeSession({
+  trainerId = linhTrainerId,
+  format = "1:4",
+  serviceType = "pilates",
+  day = 10,
+  attended = 1,
+  absent = 0,
+  attendanceAtNull = false,
+  status = "completed",
+} = {}) {
   const start = dayOfMonth(day, 6 + (seq % 12)); // giờ lệch dần, tránh trùng khung
   const end = new Date(start.getTime() + 3600 * 1000);
   seq++;
-  let classId = null;
-  let slotId = null;
-  let title;
-  if (kind === "group") {
-    const cls = await GymClass.create({
-      name: `Lop payroll ${seq}`, serviceType: "pilates", coachId: trainerId,
-      startAt: start, endAt: end, capacity: 10, bookedCount: attended + absent,
-    });
-    classId = cls._id;
-    title = cls.name;
-  } else {
-    const slot = await PTSlot.create({
-      trainerId, startAt: start, endAt: end,
-      capacity: kind === "ptGroup" ? 5 : 1, bookedCount: attended + absent,
-    });
-    slotId = slot._id;
-    title = kind === "ptGroup" ? "PT nhóm — HLV X" : "1:1 PT — HLV X";
-  }
+  const cls = await GymClass.create({
+    name: `Lop payroll ${seq}`,
+    serviceType,
+    format,
+    coachId: trainerId,
+    startAt: start,
+    endAt: end,
+    capacity: FORMAT_CAPACITY[format],
+    bookedCount: attended + absent,
+  });
   const docs = [];
   const customer = await User.findOne({ phone: "0909090909" });
   for (let i = 0; i < attended + absent; i++) {
     docs.push({
       userId: customer._id,
-      type: kind === "group" ? "group" : "pt",
-      classId, slotId, trainerId, title,
-      startAt: start, endAt: end,
+      classId: cls._id,
+      trainerId,
+      title: cls.name,
+      serviceType,
+      format,
+      startAt: start,
+      endAt: end,
       status: status === "completed" ? (i < attended ? "completed" : "no_show") : status,
-      attendanceAt: attendanceAtNull || status !== "completed" ? null : (i < attended + absent ? start : null),
+      // no_show cũng có attendanceAt (được điểm danh thật là Vắng); sweep/chưa điểm danh -> null
+      attendanceAt: attendanceAtNull || status !== "completed" ? null : start,
       attendanceBy: null,
     });
   }
-  // no_show cũng có attendanceAt (được điểm danh thật là Vắng)
-  for (let i = attended; i < docs.length; i++) docs[i].attendanceAt = start;
-  if (attendanceAtNull) for (const d of docs) d.attendanceAt = null;
   const bookings = await Booking.insertMany(docs);
-  return { classId, slotId, bookings, start };
+  return { classId: cls._id, bookings, start };
 }
 
 const setRates = (trainerId, body, token = tokens.admin) =>
@@ -124,7 +134,7 @@ before(async () => {
   await waitHealthy(S);
   await mongoose.connect(URI);
 
-  // Dọn 2 collection mới cho chắc (seed đã xoá — đây là lưới an toàn khi seed cũ)
+  // Dọn mức cũ cho chắc (seed đã xoá — đây là lưới an toàn khi seed cũ)
   await TrainerRate.deleteMany({});
 
   // Seed (her-17) nay kèm LỊCH SỬ ĐIỂM DANH DEMO cho màn Tổng quan — suite này cần số
@@ -174,10 +184,10 @@ test("matrix: admin đủ quyền; LỄ TÂN 403 TẤT CẢ; HLV chỉ /my; khá
 test("validate: số âm / không nguyên / per lạ -> 400; trainerId rác -> 404", async () => {
   for (const bad of [
     { baseSalary: -1 },
-    { pt1Amount: 1.5 },
-    { groupAmount: "abc" },
-    { groupPer: "hour" },
-    { ptGroupPer: "xxx" },
+    { f11Amount: 1.5 },
+    { f14Amount: "abc" },
+    { f11Per: "hour" },
+    { f18Per: "xxx" },
     { baseSalary: 10e9 },
   ]) {
     const r = await setRates(linhTrainerId, bad);
@@ -190,44 +200,50 @@ test("validate: số âm / không nguyên / per lạ -> 400; trainerId rác -> 4
 
 // ---------- 3. Theo buổi ----------
 
-test("per-session: lớp nhóm 2 Đến 1 Vắng = 1 buổi; PT 1:1 = 1; PT nhóm 2 Đến = 1 buổi", async () => {
-  // Mức của Đức (otherTrainer): group 200k/buổi, pt1 300k, ptGroup 400k/buổi
+test("per-session: buổi 1:4 có 2 Đến 1 Vắng = 1 buổi; buổi 1:1 = 1; buổi 1:2 có 2 Đến = 1 buổi", async () => {
+  // Mức của Đức (otherTrainer): 1:4 200k/buổi, 1:1 300k/buổi, 1:2 400k/buổi
   await TrainerRate.create({
     trainerId: otherTrainerId, baseSalary: 0,
-    groupAmount: 200000, groupPer: "session",
-    pt1Amount: 300000, ptGroupAmount: 400000, ptGroupPer: "session",
+    f11Amount: 300000, f11Per: "session",
+    f12Amount: 400000, f12Per: "session",
+    f14Amount: 200000, f14Per: "session",
+    f18Amount: 0, f18Per: "session",
     effectiveFrom: dayOfMonth(1, 0),
   });
-  await makeSession({ trainerId: otherTrainerId, kind: "group", day: 5, attended: 2, absent: 1 });
-  await makeSession({ trainerId: otherTrainerId, kind: "pt1", day: 6, attended: 1 });
-  await makeSession({ trainerId: otherTrainerId, kind: "ptGroup", day: 7, attended: 2 });
+  await makeSession({ trainerId: otherTrainerId, format: "1:4", day: 5, attended: 2, absent: 1 });
+  await makeSession({ trainerId: otherTrainerId, format: "1:1", day: 6, attended: 1 });
+  await makeSession({ trainerId: otherTrainerId, format: "1:2", day: 7, attended: 2 });
 
   const r = await call(`/payroll/summary?month=${MONTH}`, { token: tokens.admin });
   assert.equal(r.status, 200);
-  const e = r.data.entries.find((x) => x.trainerId.toString() === otherTrainerId.toString());
+  const e = rowOf(r.data, otherTrainerId);
   assert.ok(e, "phải có dòng của HLV này");
-  assert.equal(e.group.count, 1, "lớp nhóm tính theo BUỔI");
-  assert.equal(e.pt1.count, 1);
-  assert.equal(e.ptGroup.count, 1, "PT nhóm theo BUỔI");
+  assert.equal(e.byFormat["1:4"].count, 1, "buổi 1:4 tính theo BUỔI (nhiều khách vẫn 1 buổi)");
+  assert.equal(e.byFormat["1:1"].count, 1);
+  assert.equal(e.byFormat["1:2"].count, 1, "buổi 1:2 theo BUỔI");
+  assert.equal(e.byFormat["1:8"].count, 0);
   assert.equal(e.commission, 200000 + 300000 + 400000);
   assert.equal(e.total, e.commission);
 });
 
 // ---------- 4. Theo đầu khách ----------
 
-test("per-attendee: group 2 Đến = 2 x mức; ptGroup 2 Đến = 2 x mức; Vắng không tính", async () => {
+test("per-attendee: buổi 1:4 có 2 Đến = 2 x mức; buổi 1:2 có 2 Đến = 2 x mức; Vắng không tính", async () => {
   // Đổi mức của Đức sang per=attendee (bản ghi mới, effective từ đầu tháng — đè logic chọn mới nhất)
   await TrainerRate.create({
     trainerId: otherTrainerId, baseSalary: 0,
-    groupAmount: 200000, groupPer: "attendee",
-    pt1Amount: 300000, ptGroupAmount: 400000, ptGroupPer: "attendee",
+    f11Amount: 300000, f11Per: "attendee",
+    f12Amount: 400000, f12Per: "attendee",
+    f14Amount: 200000, f14Per: "attendee",
+    f18Amount: 0, f18Per: "attendee",
     effectiveFrom: dayOfMonth(1, 1), // muộn hơn bản ghi trước 1 giờ -> thắng
   });
   const r = await call(`/payroll/summary?month=${MONTH}`, { token: tokens.admin });
-  const e = r.data.entries.find((x) => x.trainerId.toString() === otherTrainerId.toString());
-  assert.equal(e.group.count, 2, "theo ĐẦU KHÁCH đến (Vắng không tính)");
-  assert.equal(e.ptGroup.count, 2);
-  assert.equal(e.pt1.count, 1);
+  const e = rowOf(r.data, otherTrainerId);
+  assert.equal(e.byFormat["1:4"].count, 2, "theo ĐẦU KHÁCH đến (Vắng không tính)");
+  assert.equal(e.byFormat["1:2"].count, 2);
+  assert.equal(e.byFormat["1:1"].count, 1);
+  assert.equal(e.byFormat["1:4"].per, "attendee", "per hiển thị theo mức hiện hành");
   assert.equal(e.commission, 2 * 200000 + 300000 + 2 * 400000);
 });
 
@@ -237,36 +253,48 @@ test("attendance-only: sweep(attendanceAt null) / cancelled / booked không đư
   // HLV Thu (trainer thứ 3) — sạch dữ liệu
   const thu = await Trainer.findOne({ _id: { $nin: [linhTrainerId, otherTrainerId] } });
   await TrainerRate.create({
-    trainerId: thu._id, baseSalary: 0, groupAmount: 100000, groupPer: "session",
-    pt1Amount: 100000, ptGroupAmount: 100000, ptGroupPer: "session", effectiveFrom: dayOfMonth(1, 0),
+    trainerId: thu._id, baseSalary: 0,
+    f11Amount: 100000, f11Per: "session",
+    f12Amount: 100000, f12Per: "session",
+    f14Amount: 100000, f14Per: "session",
+    f18Amount: 100000, f18Per: "session",
+    effectiveFrom: dayOfMonth(1, 0),
   });
-  await makeSession({ trainerId: thu._id, kind: "group", day: 8, attended: 2, attendanceAtNull: true }); // sweep
-  await makeSession({ trainerId: thu._id, kind: "pt1", day: 9, attended: 1, status: "cancelled" });
-  await makeSession({ trainerId: thu._id, kind: "pt1", day: 11, attended: 1, status: "booked" });
+  await makeSession({ trainerId: thu._id, format: "1:4", day: 8, attended: 2, attendanceAtNull: true }); // sweep
+  await makeSession({ trainerId: thu._id, format: "1:1", day: 9, attended: 1, status: "cancelled" });
+  await makeSession({ trainerId: thu._id, format: "1:1", day: 11, attended: 1, status: "booked" });
 
   const r = await call(`/payroll/summary?month=${MONTH}`, { token: tokens.admin });
-  const e = r.data.entries.find((x) => x.trainerId.toString() === thu._id.toString());
+  const e = rowOf(r.data, thu._id);
   assert.equal(e.commission, 0, "không buổi nào đủ điều kiện điểm danh thật");
-  assert.equal(e.group.count + e.pt1.count + e.ptGroup.count, 0);
+  assert.equal(totalUnits(e), 0);
 });
 
 // ---------- 6. Đổi mức giữa tháng ----------
 
 test("rate-change: buổi ngày 5 áp mức cũ, buổi ngày 15 áp mức mới (đổi ngày 10)", async () => {
   await TrainerRate.create({
-    trainerId: linhTrainerId, baseSalary: 0, groupAmount: 0, groupPer: "session",
-    pt1Amount: 100000, ptGroupAmount: 0, ptGroupPer: "session", effectiveFrom: dayOfMonth(1, 0),
+    trainerId: linhTrainerId, baseSalary: 0,
+    f11Amount: 100000, f11Per: "session",
+    f12Amount: 0, f12Per: "session",
+    f14Amount: 0, f14Per: "session",
+    f18Amount: 0, f18Per: "session",
+    effectiveFrom: dayOfMonth(1, 0),
   });
   await TrainerRate.create({
-    trainerId: linhTrainerId, baseSalary: 0, groupAmount: 0, groupPer: "session",
-    pt1Amount: 150000, ptGroupAmount: 0, ptGroupPer: "session", effectiveFrom: dayOfMonth(10, 0),
+    trainerId: linhTrainerId, baseSalary: 0,
+    f11Amount: 150000, f11Per: "session",
+    f12Amount: 0, f12Per: "session",
+    f14Amount: 0, f14Per: "session",
+    f18Amount: 0, f18Per: "session",
+    effectiveFrom: dayOfMonth(10, 0),
   });
-  await makeSession({ trainerId: linhTrainerId, kind: "pt1", day: 5, attended: 1 });
-  await makeSession({ trainerId: linhTrainerId, kind: "pt1", day: 15, attended: 1 });
+  await makeSession({ trainerId: linhTrainerId, format: "1:1", day: 5, attended: 1 });
+  await makeSession({ trainerId: linhTrainerId, format: "1:1", day: 15, attended: 1 });
 
   const r = await call(`/payroll/summary?month=${MONTH}`, { token: tokens.admin });
-  const e = r.data.entries.find((x) => x.trainerId.toString() === linhTrainerId.toString());
-  assert.equal(e.pt1.count, 2);
+  const e = rowOf(r.data, linhTrainerId);
+  assert.equal(e.byFormat["1:1"].count, 2);
   assert.equal(e.commission, 100000 + 150000, "mỗi buổi áp mức tại NGÀY DIỄN RA");
 });
 
@@ -275,67 +303,100 @@ test("rate-change: buổi ngày 5 áp mức cũ, buổi ngày 15 áp mức mới
 test("no-rate + base-salary: HLV chưa thiết lập -> 0đ không crash; lương cứng cộng đủ dù 0 buổi", async () => {
   // HLV mới toanh chưa có rate, có 1 buổi dạy
   const fresh = await Trainer.create({ name: "HLV Moi", specialty: "" });
-  await makeSession({ trainerId: fresh._id, kind: "pt1", day: 12, attended: 1 });
+  await makeSession({ trainerId: fresh._id, format: "1:1", day: 12, attended: 1 });
 
   let r = await call(`/payroll/summary?month=${MONTH}`, { token: tokens.admin });
   assert.equal(r.status, 200);
-  let e = r.data.entries.find((x) => x.trainerId.toString() === fresh._id.toString());
+  let e = rowOf(r.data, fresh._id);
   assert.equal(e.commission, 0, "chưa thiết lập mức -> 0đ");
   assert.equal(e.total, 0);
+  assert.equal(e.byFormat["1:1"].count, 1, "vẫn ghi nhận buổi dạy, chỉ là 0đ");
 
   // Thiết lập lương cứng qua API — không dạy thêm buổi nào có mức
   const set = await setRates(fresh._id, { baseSalary: 8000000 });
   assert.equal(set.status, 201, JSON.stringify(set.data));
   r = await call(`/payroll/summary?month=${MONTH}`, { token: tokens.admin });
-  e = r.data.entries.find((x) => x.trainerId.toString() === fresh._id.toString());
+  e = rowOf(r.data, fresh._id);
   assert.equal(e.baseSalary, 8000000);
   assert.equal(e.total, 8000000, "tổng = lương cứng khi hoa hồng 0");
 });
 
-// ---------- 9. HLV chỉ thấy của mình ----------
+// ---------- 9. Đủ 4 loại hình trong 1 tháng ----------
+
+test("4 loại hình: mỗi loại 1 buổi mức khác nhau -> byFormat đúng từng loại, commission = tổng 4", async () => {
+  const multi = await Trainer.create({ name: "HLV Bon Loai", specialty: "" });
+  await TrainerRate.create({
+    trainerId: multi._id, baseSalary: 0,
+    f11Amount: 100000, f11Per: "session",
+    f12Amount: 200000, f12Per: "session",
+    f14Amount: 300000, f14Per: "session",
+    f18Amount: 400000, f18Per: "session",
+    effectiveFrom: dayOfMonth(1, 0),
+  });
+  await makeSession({ trainerId: multi._id, format: "1:1", day: 20, attended: 1 });
+  await makeSession({ trainerId: multi._id, format: "1:2", day: 21, attended: 2 });
+  await makeSession({ trainerId: multi._id, format: "1:4", day: 22, attended: 3, absent: 1 });
+  await makeSession({ trainerId: multi._id, format: "1:8", serviceType: "yoga", day: 23, attended: 5 });
+
+  const r = await call(`/payroll/summary?month=${MONTH}`, { token: tokens.admin });
+  const e = rowOf(r.data, multi._id);
+  assert.equal(e.byFormat["1:1"].count, 1);
+  assert.equal(e.byFormat["1:1"].amount, 100000);
+  assert.equal(e.byFormat["1:2"].count, 1);
+  assert.equal(e.byFormat["1:2"].amount, 200000);
+  assert.equal(e.byFormat["1:4"].count, 1);
+  assert.equal(e.byFormat["1:4"].amount, 300000);
+  assert.equal(e.byFormat["1:8"].count, 1);
+  assert.equal(e.byFormat["1:8"].amount, 400000);
+  assert.equal(e.commission, 100000 + 200000 + 300000 + 400000, "hoa hồng = tổng 4 loại hình");
+  assert.equal(e.total, e.commission);
+});
+
+// ---------- 10. HLV chỉ thấy của mình ----------
 
 test("my-only: /payroll/my trả đúng số của Linh, không lộ HLV khác", async () => {
   const r = await call(`/payroll/my?month=${MONTH}`, { token: tokens.trainer });
   assert.equal(r.status, 200);
   assert.equal(r.data.entry.trainerId.toString(), linhTrainerId.toString());
-  assert.equal(r.data.entry.pt1.count, 2, "đúng 2 buổi PT của Linh (test rate-change)");
+  assert.equal(r.data.entry.byFormat["1:1"].count, 2, "đúng 2 buổi 1:1 của Linh (test rate-change)");
   assert.equal(r.data.entry.commission, 250000);
   assert.equal(r.data.entries, undefined, "không được trả danh sách tất cả HLV");
 });
 
-// ---------- 10. Lương luôn tính động (16/08 bỏ chốt) ----------
+// ---------- 11. Lương luôn tính động (16/08 bỏ chốt) ----------
 
 test("luon-dong (quyết định 16/08 BỎ chốt): sửa/thêm điểm danh là bảng lương cập nhật NGAY", async () => {
   const before = await call(`/payroll/summary?month=${MONTH}`, { token: tokens.admin });
-  const linhBefore = before.data.entries.find((x) => x.trainerId.toString() === linhTrainerId.toString());
+  const linhBefore = rowOf(before.data, linhTrainerId);
 
-  await makeSession({ trainerId: linhTrainerId, kind: "pt1", day: 16, attended: 1 });
+  await makeSession({ trainerId: linhTrainerId, format: "1:1", day: 16, attended: 1 });
 
   const after = await call(`/payroll/summary?month=${MONTH}`, { token: tokens.admin });
-  const linhAfter = after.data.entries.find((x) => x.trainerId.toString() === linhTrainerId.toString());
-  assert.equal(linhAfter.pt1.count, linhBefore.pt1.count + 1, "không còn chốt — số luôn theo điểm danh hiện tại");
+  const linhAfter = rowOf(after.data, linhTrainerId);
+  assert.equal(linhAfter.byFormat["1:1"].count, linhBefore.byFormat["1:1"].count + 1,
+    "không còn chốt — số luôn theo điểm danh hiện tại");
   assert.ok(!("closed" in after.data), "response không còn khái niệm chốt");
   // /my của HLV cũng là số động, không còn khái niệm chốt
   const my = await call(`/payroll/my?month=${MONTH}`, { token: tokens.trainer });
-  assert.equal(my.data.entry.pt1.count, linhAfter.pt1.count);
+  assert.equal(my.data.entry.byFormat["1:1"].count, linhAfter.byFormat["1:1"].count);
   assert.ok(!("closed" in my.data), "/my không còn field closed");
   // Endpoint chốt đã bị XOÁ — khoá vĩnh viễn (review her-16 A3)
   assert.equal((await call("/payroll/close", { method: "POST", token: tokens.admin, body: { month: MONTH } })).status, 404);
 });
 
-// ---------- 11. Buổi đổi HLV ----------
+// ---------- 12. Buổi đổi HLV ----------
 
 test("coach-swap: buổi bị đổi HLV tính cho người DẠY THẬT (trainerId trên booking)", async () => {
   // Buổi tạo dưới tên otherTrainer nhưng booking.trainerId đã sync sang Linh (mô phỏng đổi HLV)
-  const { bookings } = await makeSession({ trainerId: otherTrainerId, kind: "pt1", day: 18, attended: 1 });
+  const { bookings } = await makeSession({ trainerId: otherTrainerId, format: "1:1", day: 18, attended: 1 });
   await Booking.updateMany({ _id: { $in: bookings.map((b) => b._id) } }, { $set: { trainerId: linhTrainerId } });
 
   const r = await call(`/payroll/summary?month=${MONTH}`, { token: tokens.admin });
-  const linh = r.data.entries.find((x) => x.trainerId.toString() === linhTrainerId.toString());
-  assert.equal(linh.pt1.count, 4, "buổi đổi HLV phải về tay Linh");
+  const linh = rowOf(r.data, linhTrainerId);
+  assert.equal(linh.byFormat["1:1"].count, 4, "buổi đổi HLV phải về tay Linh");
 });
 
-// ---------- 12. Input rác ----------
+// ---------- 13. Input rác ----------
 
 test("bad-month: month sai định dạng -> 400; XEM tháng TƯƠNG LAI -> 400", async () => {
   for (const bad of ["13-2026", "2026-13", "abc", "2026-00", ""]) {
@@ -357,20 +418,20 @@ test("review-fix (V1): điểm danh sớm 1 khách rồi ĐỔI HLV lớp — bu
   const swapEnd = hoursFromNow(3);
   // Dọn lịch seed của Linh trùng cửa sổ này để bước đổi HLV không vướng "trùng giờ"
   await GymClass.deleteMany({ coachId: linhTrainerId, startAt: { $lt: swapEnd }, endAt: { $gt: swapStart } });
-  await PTSlot.deleteMany({ trainerId: linhTrainerId, startAt: { $lt: swapEnd }, endAt: { $gt: swapStart } });
   const cls = await GymClass.create({
-    name: "Lop swap payroll", serviceType: "pilates", coachId: otherTrainerId,
-    startAt: swapStart, endAt: swapEnd, capacity: 5, bookedCount: 2,
+    name: "Lop swap payroll", serviceType: "pilates", format: "1:4", coachId: otherTrainerId,
+    startAt: swapStart, endAt: swapEnd, capacity: FORMAT_CAPACITY["1:4"], bookedCount: 2,
   });
   const kh = await User.findOne({ phone: "0909090909" });
   const mk = (status, attendanceAt) => ({
-    userId: kh._id, type: "group", classId: cls._id, trainerId: otherTrainerId,
-    title: cls.name, startAt: cls.startAt, endAt: cls.endAt, status, attendanceAt,
+    userId: kh._id, classId: cls._id, trainerId: otherTrainerId,
+    title: cls.name, serviceType: cls.serviceType, format: cls.format,
+    startAt: cls.startAt, endAt: cls.endAt, status, attendanceAt,
   });
   const preR = await call(`/payroll/summary?month=${MONTH}`, { token: tokens.admin });
   const preSwap = {
-    duc: preR.data.entries.find((x) => x.trainerId.toString() === otherTrainerId.toString()).group.count,
-    linh: preR.data.entries.find((x) => x.trainerId.toString() === linhTrainerId.toString()).group.count,
+    duc: rowOf(preR.data, otherTrainerId).byFormat["1:4"].count,
+    linh: rowOf(preR.data, linhTrainerId).byFormat["1:4"].count,
   };
   const [b1] = await Booking.insertMany([mk("completed", new Date()), mk("booked", null)]);
 
@@ -382,46 +443,81 @@ test("review-fix (V1): điểm danh sớm 1 khách rồi ĐỔI HLV lớp — bu
   assert.equal((await Booking.findById(b1._id)).trainerId.toString(), linhTrainerId.toString(),
     "booking điểm danh SỚM (buổi chưa diễn ra) phải sang HLV mới");
 
-  // So sánh DELTA với trước khi tạo lớp (các test trước đã cho Đức buổi group riêng)
-  const snap = async () => {
-    const r = await call(`/payroll/summary?month=${MONTH}`, { token: tokens.admin });
-    return {
-      duc: r.data.entries.find((x) => x.trainerId.toString() === otherTrainerId.toString()).group.count,
-      linh: r.data.entries.find((x) => x.trainerId.toString() === linhTrainerId.toString()).group.count,
-    };
+  // So sánh DELTA với trước khi tạo lớp (các test trước đã cho Đức buổi 1:4 riêng)
+  const r = await call(`/payroll/summary?month=${MONTH}`, { token: tokens.admin });
+  const after = {
+    duc: rowOf(r.data, otherTrainerId).byFormat["1:4"].count,
+    linh: rowOf(r.data, linhTrainerId).byFormat["1:4"].count,
   };
-  const after = await snap();
   assert.equal(after.duc, preSwap.duc, "HLV cũ không được tính buổi đã chuyển giao");
   assert.ok(after.linh > preSwap.linh, "HLV mới (người dạy thật) hưởng buổi này");
 });
 
-test("review-fix (V2): khung 1:1 có khách điểm danh sớm rồi NÂNG capacity — cùng slot chỉ 1 buổi PT nhóm", async () => {
+test("review-fix (V2): 2 khách CÙNG MỘT LỚP = 1 buổi (per=attendee -> 2 đơn vị), không tách thành buổi lẻ", async () => {
   const before = await call(`/payroll/summary?month=${MONTH}`, { token: tokens.admin });
-  const eBefore = before.data.entries.find((x) => x.trainerId.toString() === otherTrainerId.toString());
-  const slot = await PTSlot.create({
-    trainerId: otherTrainerId, startAt: hoursFromNow(5), endAt: hoursFromNow(6), capacity: 1, bookedCount: 1,
+  const eBefore = rowOf(before.data, otherTrainerId);
+  const cls = await GymClass.create({
+    name: "Lop gop buoi", serviceType: "pilates", format: "1:2", coachId: otherTrainerId,
+    startAt: hoursFromNow(5), endAt: hoursFromNow(6), capacity: FORMAT_CAPACITY["1:2"], bookedCount: 2,
   });
   const kh = await User.findOne({ phone: "0909090909" });
-  const mk = (title, status, attendanceAt) => ({
-    userId: kh._id, type: "pt", slotId: slot._id, trainerId: otherTrainerId,
-    title, startAt: slot.startAt, endAt: slot.endAt, status, attendanceAt,
+  const mk = () => ({
+    userId: kh._id, classId: cls._id, trainerId: otherTrainerId,
+    title: cls.name, serviceType: cls.serviceType, format: cls.format,
+    startAt: cls.startAt, endAt: cls.endAt, status: "completed", attendanceAt: new Date(),
   });
-  // Khách 1 đặt khi còn 1:1, được điểm danh SỚM
-  await Booking.insertMany([mk("1:1 PT — HLV X", "completed", new Date())]);
-  // Quầy nâng capacity 1 -> 3 (API — sync title phải kéo cả booking completed chưa diễn ra)
-  const up = await call(`/schedule/pt-slots/${slot._id}`, { method: "PATCH", token: tokens.staff, body: { capacity: 3 } });
-  assert.equal(up.status, 200, JSON.stringify(up.data));
-  const b1 = await Booking.findOne({ slotId: slot._id });
-  assert.match(b1.title, /^PT nhóm — /, "title booking điểm danh sớm phải đồng bộ theo dạng khung mới");
-  // Khách 2 đặt sau khi đã là nhóm, cũng điểm danh
-  await Booking.insertMany([mk(b1.title, "completed", new Date())]);
+  await Booking.insertMany([mk(), mk()]);
 
   const r = await call(`/payroll/summary?month=${MONTH}`, { token: tokens.admin });
-  const e = r.data.entries.find((x) => x.trainerId.toString() === otherTrainerId.toString());
-  // per hiện hành của Đức là attendee (test per-attendee) -> buổi nhóm 2 khách = 2 đơn vị,
-  // và KHÔNG có buổi pt1 lẻ nào phát sinh từ cùng slot
-  assert.equal(e.pt1.count, eBefore.pt1.count, "không được tách cùng slot thành thêm buổi 1:1");
-  assert.equal(e.ptGroup.count, eBefore.ptGroup.count + 2, "1 buổi nhóm 2 khách (per=attendee) = +2 đơn vị");
+  const e = rowOf(r.data, otherTrainerId);
+  // per hiện hành của Đức là attendee (test per-attendee) -> 1 buổi 1:2 có 2 khách = 2 đơn vị,
+  // và KHÔNG có buổi loại hình khác nào phát sinh từ cùng lớp
+  assert.equal(e.byFormat["1:1"].count, eBefore.byFormat["1:1"].count, "không được tách cùng lớp thành buổi loại khác");
+  assert.equal(e.byFormat["1:4"].count, eBefore.byFormat["1:4"].count);
+  assert.equal(e.byFormat["1:2"].count, eBefore.byFormat["1:2"].count + 2, "1 buổi 1:2 có 2 khách (per=attendee) = +2 đơn vị");
+});
+
+test("phòng thủ: booking rác thiếu classId/format không làm sập bảng lương", async () => {
+  // Chèn RAW qua driver để né validate enum của Mongoose — mô phỏng dữ liệu cũ trên DB thật
+  // (booking PT trước her-35 không có classId; booking lỗi có format ngoài danh mục).
+  const rac = await Trainer.create({ name: "HLV Du Lieu Rac", specialty: "" });
+  await TrainerRate.create({
+    trainerId: rac._id, baseSalary: 0,
+    f11Amount: 100000, f11Per: "session",
+    f12Amount: 100000, f12Per: "session",
+    f14Amount: 100000, f14Per: "session",
+    f18Amount: 100000, f18Per: "session",
+    effectiveFrom: dayOfMonth(1, 0),
+  });
+  // 1 buổi HỢP LỆ để có mốc so sánh
+  await makeSession({ trainerId: rac._id, format: "1:1", day: 24, attended: 1 });
+
+  const kh = await User.findOne({ phone: "0909090909" });
+  const st = dayOfMonth(25, 8);
+  const end = new Date(st.getTime() + 3600000);
+  const clsRac = await GymClass.create({
+    name: "Lop rac", serviceType: "pilates", format: "1:4", coachId: rac._id,
+    startAt: st, endAt: end, capacity: FORMAT_CAPACITY["1:4"], bookedCount: 1,
+  });
+  const raw = mongoose.connection.collection("bookings");
+  await raw.insertOne({ // loại hình lạ
+    userId: kh._id, classId: clsRac._id, trainerId: rac._id, title: "Lop rac",
+    serviceType: "pilates", format: "9:9", startAt: st, endAt: end,
+    status: "completed", attendanceAt: st,
+  });
+  await raw.insertOne({ // thiếu classId (booking PT cũ)
+    userId: kh._id, trainerId: rac._id, title: "Buoi PT cu",
+    serviceType: "pilates", format: "1:1", startAt: st, endAt: end,
+    status: "completed", attendanceAt: st,
+  });
+
+  const r = await call(`/payroll/summary?month=${MONTH}`, { token: tokens.admin });
+  assert.equal(r.status, 200, "bảng lương vẫn trả 200, không 500");
+  const e = rowOf(r.data, rac._id);
+  assert.equal(e.byFormat["1:1"].count, 1, "chỉ đếm buổi hợp lệ — booking thiếu classId bị bỏ qua");
+  assert.equal(e.byFormat["1:4"].count, 0, "booking format lạ '9:9' không rơi vào loại hình nào");
+  assert.equal(totalUnits(e), 1);
+  assert.equal(e.commission, 100000, "không cộng tiền từ 2 booking rác");
 });
 
 test("review-fix (V4): summary/my tháng TƯƠNG LAI -> 400; năm rác '0026-08' -> 400", async () => {
@@ -457,17 +553,29 @@ test("review-fix (biên tháng): buổi 23:30 cuối tháng trước và 00:30 n
   const kh = await User.findOne({ phone: "0909090909" });
   const fresh = await Trainer.create({ name: "HLV Bien Thang", specialty: "" });
   await TrainerRate.create({
-    trainerId: fresh._id, baseSalary: 0, groupAmount: 0, groupPer: "session",
-    pt1Amount: 100000, ptGroupAmount: 0, ptGroupPer: "session", effectiveFrom: new Date(2020, 0, 1),
+    trainerId: fresh._id, baseSalary: 0,
+    f11Amount: 100000, f11Per: "session",
+    f12Amount: 0, f12Per: "session",
+    f14Amount: 0, f14Per: "session",
+    f18Amount: 0, f18Per: "session",
+    effectiveFrom: new Date(2020, 0, 1),
   });
   for (const st of [prevEnd, firstDay]) {
-    const slot = await PTSlot.create({ trainerId: fresh._id, startAt: st, endAt: new Date(st.getTime() + 3600000), capacity: 1, bookedCount: 1 });
-    await Booking.insertMany([{ userId: kh._id, type: "pt", slotId: slot._id, trainerId: fresh._id, title: "1:1 PT — X", startAt: st, endAt: new Date(st.getTime() + 3600000), status: "completed", attendanceAt: st }]);
+    const end = new Date(st.getTime() + 3600000);
+    const cls = await GymClass.create({
+      name: "Buoi bien thang", serviceType: "pilates", format: "1:1", coachId: fresh._id,
+      startAt: st, endAt: end, capacity: FORMAT_CAPACITY["1:1"], bookedCount: 1,
+    });
+    await Booking.insertMany([{
+      userId: kh._id, classId: cls._id, trainerId: fresh._id, title: cls.name,
+      serviceType: "pilates", format: "1:1", startAt: st, endAt: end,
+      status: "completed", attendanceAt: st,
+    }]);
   }
   const cur = await call(`/payroll/summary?month=${MONTH}`, { token: tokens.admin });
   const prev = await call(`/payroll/summary?month=${prevMonthStr}`, { token: tokens.admin });
   const eCur = cur.data.entries.find((x) => x.trainerName === "HLV Bien Thang");
   const ePrev = prev.data.entries.find((x) => x.trainerName === "HLV Bien Thang");
-  assert.equal(eCur.pt1.count, 1, "chỉ buổi 00:30 ngày 1 thuộc tháng này");
-  assert.equal(ePrev.pt1.count, 1, "buổi 23:30 thuộc tháng trước");
+  assert.equal(eCur.byFormat["1:1"].count, 1, "chỉ buổi 00:30 ngày 1 thuộc tháng này");
+  assert.equal(ePrev.byFormat["1:1"].count, 1, "buổi 23:30 thuộc tháng trước");
 });

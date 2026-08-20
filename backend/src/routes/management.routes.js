@@ -2,8 +2,10 @@ const express = require("express");
 const Booking = require("../models/Booking");
 const GymClass = require("../models/GymClass");
 const User = require("../models/User");
+const Package = require("../models/Package");
 const { requireAuth, requireRole } = require("../middleware/auth");
 const wrap = require("../utils/asyncHandler");
+const { HAS_SESSIONS_LEFT } = require("../utils/packages");
 
 const router = express.Router();
 // reception + admin: xem/hủy lịch của mọi khách, không giới hạn giờ.
@@ -79,9 +81,7 @@ router.get("/bookings", wrap(async (req, res) => {
     .skip((page - 1) * limit)
     .limit(limit + 1)
     .populate("userId", "name phone")
-    .populate("trainerId", "name")
-    // her-22: bộ môn của lớp — ô tìm màn Lịch tập lọc theo bộ môn kể cả lớp tên riêng
-    .populate("classId", "serviceType");
+    .populate("trainerId", "name");
 
   const hasMore = bookings.length > limit;
   if (hasMore) bookings.pop();
@@ -93,16 +93,21 @@ router.get("/bookings", wrap(async (req, res) => {
     hasMore,
     bookings: bookings.map((b) => ({
       id: b._id,
-      type: b.type,
       title: b.title,
-      // classId đã populate — trả về ID như cũ, app đang gộp/so sánh theo ID
-      classId: b.classId?._id ?? b.classId,
-      slotId: b.slotId, // her-20: app gộp booking PT theo khung để điểm danh theo danh sách
-      serviceType: b.type === "pt" ? "pt" : b.classId?.serviceType || null,
+      // her-20/her-35: app gộp booking theo buổi (classId) để điểm danh theo danh sách
+      classId: b.classId,
+      // her-35: bộ môn + loại hình lấy thẳng từ SNAPSHOT của booking (không join lớp) —
+      // ô tìm màn Lịch tập lọc theo bộ môn kể cả lớp đặt tên riêng
+      serviceType: b.serviceType,
+      format: b.format,
       coach: b.trainerId?.name || "",
       startAt: b.startAt,
       endAt: b.endAt,
       status: b.status,
+      // her-40 (20/08): dấu điểm danh THẬT. status "completed" chưa chắc là "đã đến" —
+      // buổi qua giờ được sweep tự chuyển sang completed với attendanceAt = null.
+      // App đếm "n đến" phải dựa vào field này (không tính hoa hồng — her-10).
+      attendanceAt: b.attendanceAt,
       customer: {
         id: b.userId?._id,
         name: b.userId?.name || "(đã xoá)",
@@ -125,8 +130,9 @@ router.get("/customers/:id/bookings", requireRole("reception", "admin"), wrap(as
     customer: { id: customer._id, name: customer.name, phone: customer.phone },
     bookings: bookings.map((b) => ({
       id: b._id,
-      type: b.type,
       title: b.title,
+      serviceType: b.serviceType,
+      format: b.format,
       coach: b.trainerId?.name || "",
       startAt: b.startAt,
       endAt: b.endAt,
@@ -200,8 +206,8 @@ router.patch("/bookings/:id/attendance", wrap(async (req, res) => {
   });
 }));
 
-// GET /api/management/classes/:id/roster -- danh sách tên khách đã đặt 1 khung giờ Group cụ thể
-// (yêu cầu: hiển thị tên khách hàng đã đặt lịch trên khung giờ group).
+// GET /api/management/classes/:id/roster -- danh sách tên khách đã đặt 1 buổi cụ thể
+// (her-35: mọi buổi đều là lớp, kể cả 1:1 — quầy/HLV điểm danh theo danh sách của buổi).
 // reception/admin xem mọi lớp; trainer chỉ xem lớp do chính mình phụ trách.
 router.get("/classes/:id/roster", wrap(async (req, res) => {
   const gymClass = await GymClass.findById(req.params.id).populate("coachId", "name");
@@ -242,50 +248,44 @@ router.get("/classes/:id/roster", wrap(async (req, res) => {
   });
 }));
 
-// GET /api/management/pt-slots/:id/roster -- danh sách khách đã đặt 1 khung PT (her-20:
-// quầy điểm danh theo danh sách của buổi thay vì từng dòng khách rời rạc).
-// Quyền như roster lớp: reception/admin mọi khung; trainer chỉ khung của chính mình.
-const PTSlot = require("../models/PTSlot");
-const Trainer = require("../models/Trainer");
-const { ptTitle } = require("../utils/serviceTypes");
-
-router.get("/pt-slots/:id/roster", wrap(async (req, res) => {
-  const slot = await PTSlot.findById(req.params.id);
-  if (!slot) return res.status(404).json({ error: "Không tìm thấy khung giờ PT" });
-
+// GET /api/management/classes/:id/eligible-customers -- her-39 (20/08): danh sách học viên
+// quầy CÓ THỂ đặt hộ vào buổi này. Chỉ trả khách CÓ GÓI DÙNG ĐƯỢC cho đúng buổi này —
+// không đổ cả danh sách rồi để quầy chọn xong mới báo "chưa có gói".
+// Điều kiện gói khớp ĐÚNG như chargeSession (bộ môn + loại hình + không bảo lưu + còn hạn
+// tới NGÀY DIỄN RA BUỔI + còn buổi) — buổi quá khứ vẫn nhận gói đã hết hạn hôm nay miễn hạn
+// cũ còn phủ ngày tập. Đặt hộ là quyền của quầy nên HLV bị chặn (H5 — kiểm ở SERVER).
+router.get("/classes/:id/eligible-customers", wrap(async (req, res) => {
   if (req.user.role === "trainer") {
-    if (!req.user.trainerId || req.user.trainerId.toString() !== slot.trainerId?.toString()) {
-      return res.status(403).json({ error: "Bạn không phụ trách khung giờ này" });
-    }
+    return res.status(403).json({ error: "Chỉ quầy lễ tân/admin mới đặt lịch hộ được" });
   }
+  const gymClass = await GymClass.findById(req.params.id);
+  if (!gymClass) return res.status(404).json({ error: "Không tìm thấy lớp học" });
+  // Lớp thiếu bộ môn/loại hình thì không đoán gói — trả rỗng thay vì gợi ý bừa
+  if (!gymClass.serviceType || !gymClass.format) return res.json({ customers: [] });
 
-  const trainer = await Trainer.findById(slot.trainerId).select("name");
-  const bookings = await Booking.find({
-    slotId: slot._id,
-    status: { $in: ["booked", "completed", "no_show"] },
-  })
-    .sort({ createdAt: 1 })
-    .populate("userId", "name phone");
-
-  res.json({
-    slot: {
-      id: slot._id,
-      title: ptTitle(slot.capacity, trainer?.name || ""),
-      coach: trainer?.name || "",
-      startAt: slot.startAt,
-      endAt: slot.endAt,
-      capacity: slot.capacity,
-      bookedCount: slot.bookedCount,
-    },
-    // HLV không được xem SĐT khách (quyết định 16/08/2026) — chặn ở server (B15)
-    customers: bookings.map((b) => ({
-      bookingId: b._id,
-      name: b.userId?.name || "(đã xoá)",
-      status: b.status,
-      attendanceAt: b.attendanceAt,
-      ...(req.user.role !== "trainer" ? { phone: b.userId?.phone || "" } : {}),
-    })),
+  const userIds = await Package.distinct("userId", {
+    serviceTypes: gymClass.serviceType,
+    format: gymClass.format,
+    pausedAt: null,
+    $or: [{ expiresAt: null }, { expiresAt: { $gte: gymClass.startAt } }],
+    ...HAS_SESSIONS_LEFT,
   });
+  if (userIds.length === 0) return res.json({ customers: [] });
+
+  // Khách đã có mặt trong buổi (kể cả đã điểm danh) thì bỏ ra — chọn vào chỉ tổ báo trùng
+  const taken = await Booking.distinct("userId", {
+    classId: gymClass._id,
+    status: { $ne: "cancelled" },
+  });
+  const takenSet = new Set(taken.map(String));
+
+  const users = await User.find({
+    _id: { $in: userIds.filter((id) => !takenSet.has(String(id))) },
+    role: "customer",
+    isActive: { $ne: false },
+  }).sort({ name: 1 });
+
+  res.json({ customers: users.map((u) => ({ id: u._id, name: u.name, phone: u.phone })) });
 }));
 
 module.exports = router;

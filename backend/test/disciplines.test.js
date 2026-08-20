@@ -85,29 +85,35 @@ after(async () => {
 
 // ---------- 1. Danh mục bộ môn từ DB ----------
 
-test("disciplines: API trả danh mục từ DB; thêm môn mới vào DB là API thấy ngay (sau cache)", async () => {
+test("disciplines: API trả đúng danh mục trong DB (theo order); thêm môn mới -> có ngay trong DB (API thấy sau khi hết cache 30s)", async () => {
   const r = await call("/disciplines", { token: tokens.customer });
   assert.equal(r.status, 200);
   const keys = r.data.disciplines.map((d) => d.key);
-  assert.deepEqual(keys, ["pilates", "yoga", "gym"], "3 môn seed theo thứ tự order");
+  // her-35: bộ môn seed có thể nhiều hơn 3 (Gym · Boxing · Stretching · Pilates · Yoga) —
+  // bất biến cần giữ là "API trả ĐÚNG danh mục trong DB, theo thứ tự order", không đóng cứng danh sách
+  const inDb = await mongoose.connection.db.collection("disciplines").find({}).sort({ order: 1, key: 1 }).toArray();
+  assert.deepEqual(keys, inDb.map((d) => d.key), "API trả đúng danh mục DB theo thứ tự order");
+  for (const k of ["pilates", "yoga", "gym"]) assert.ok(keys.includes(k), `danh mục phải có môn ${k}`);
   assert.equal((await call("/disciplines")).status, 401, "phải đăng nhập");
 
   // Thêm môn mới thẳng vào DB -> API hiển thị (cache 30s — chọc thẳng collection và đợi qua TTL
   // là việc của vận hành; ở test ta kiểm bằng restart-cache-free: gọi lại sau khi chèn + đợi TTL ngắn
   // không khả thi -> kiểm mức DB: document tồn tại và validate route chấp nhận key mới sau TTL).
-  await mongoose.connection.db.collection("disciplines").insertOne({ key: "boxing", label: "Boxing", order: 9 });
-  // đợi cache 30s là quá lâu cho test — xác nhận tối thiểu: collection có 4 môn
-  assert.equal(await mongoose.connection.db.collection("disciplines").countDocuments(), 4);
+  // Dùng key KHÔNG có trong seed để không đụng unique index khi seed đổi danh sách môn.
+  await mongoose.connection.db.collection("disciplines").insertOne({ key: "kickfit", label: "Kickfit", order: 9 });
+  // đợi cache 30s là quá lâu cho test — xác nhận tối thiểu: môn mới đã nằm trong danh mục
+  assert.equal(await mongoose.connection.db.collection("disciplines").countDocuments(), inDb.length + 1);
 });
 
 // ---------- 2. Trainer specialties ----------
 
 test("specialties: seed gán đúng; trả kèm trong /schedule/trainers và /trainers", async () => {
-  assert.deepEqual(coach.linh.specialties, ["pilates"]);
-  assert.deepEqual(coach.duc.specialties, ["gym"]);
+  // her-35: seed đổi bộ chuyên môn (Linh pilates+stretching, Đức gym+boxing)
+  assert.deepEqual(coach.linh.specialties, ["pilates", "stretching"]);
+  assert.deepEqual(coach.duc.specialties, ["gym", "boxing"]);
   const pub = await call("/trainers", { token: tokens.customer });
   const linhPub = pub.data.trainers.find((t) => t.name.includes("Linh"));
-  assert.equal(linhPub.specialty, "Pilates", "nhãn hiển thị");
+  assert.equal(linhPub.specialty, "Pilates · Stretching", "nhãn hiển thị");
 });
 
 test("tạo HLV mới: specialties phải là key trong danh mục; nhãn tự sinh", async () => {
@@ -143,9 +149,10 @@ test("admin mở hồ sơ HLV: specialties validate như trên", async () => {
 // ---------- 3. Lớp theo chuyên môn ----------
 
 test("lop-theo-chuyen-mon: giao lớp yoga cho HLV gym -> 400; đúng chuyên môn -> 201; đổi HLV sai môn -> 400", async () => {
+  // her-35: lớp có LOẠI HÌNH; sức chứa do server gán theo loại hình nên không gửi capacity
   const mk = (coachId, serviceType, hour) => call("/schedule/classes", {
     method: "POST", token: tokens.staff,
-    body: { name: "Lop CM", serviceType, coachId, startAt: hoursFromNow(hour), endAt: hoursFromNow(hour + 1), capacity: 5 },
+    body: { name: "Lop CM", serviceType, format: "1:4", coachId, startAt: hoursFromNow(hour), endAt: hoursFromNow(hour + 1) },
   });
   const bad = await mk(coach.duc.id, "yoga", 300);
   assert.equal(bad.status, 400);
@@ -170,9 +177,10 @@ test("lop-theo-chuyen-mon: giao lớp yoga cho HLV gym -> 400; đúng chuyên m�
 
 test("goi-het-han: bán gói với expiresAt (datepicker) -> hết CUỐI ngày chọn; quá khứ -> 400; bộ môn lạ -> 400", async () => {
   const kh = await User.findOne({ phone: "0909090909" });
+  // her-35: gói THỜI HẠN (không số buổi) chỉ có dạng Yoga 1:8 — dùng làm gói nền cho test ngày hết hạn
   const mk = (body) => call("/packages", {
     method: "POST", token: tokens.staff,
-    body: { userId: String(kh._id), name: "Goi date", serviceType: "yoga", price: 100000, paidAmount: 100000, ...body },
+    body: { userId: String(kh._id), name: "Goi date", serviceTypes: ["yoga"], format: "1:8", price: 100000, paidAmount: 100000, ...body },
   });
   const pick = new Date(Date.now() + 10 * 24 * 3600 * 1000);
   const ok = await mk({ expiresAt: pick.toISOString() });
@@ -183,9 +191,14 @@ test("goi-het-han: bán gói với expiresAt (datepicker) -> hết CUỐI ngày 
 
   assert.equal((await mk({ expiresAt: new Date(Date.now() - 86400000).toISOString() })).status, 400, "quá khứ");
   assert.equal((await mk({ expiresAt: "khong-phai-ngay" })).status, 400);
-  assert.equal((await mk({ totalSessions: 5, serviceType: "mon-la" })).status, 400, "loại gói phải trong danh mục+pt");
-  // pt vẫn hợp lệ
-  assert.equal((await mk({ totalSessions: 5, serviceType: "pt" })).status, 201);
+
+  const laMon = await mk({ totalSessions: 5, format: "1:1", serviceTypes: ["mon-la"] });
+  assert.equal(laMon.status, 400, "bộ môn của gói phải nằm trong danh mục");
+  assert.match(laMon.data.error, /danh mục bộ môn/);
+  // her-35: bỏ đặc cách "pt" — không còn là bộ môn hợp lệ của gói
+  const pt = await mk({ totalSessions: 5, format: "1:1", serviceTypes: ["pt"] });
+  assert.equal(pt.status, 400, "pt không còn là bộ môn hợp lệ (her-35)");
+  assert.match(pt.data.error, /danh mục bộ môn/);
 });
 
 // ---------- 5. Dashboard minMonth ----------
@@ -208,7 +221,7 @@ test("review-fix (V1): PATCH đổi BỘ MÔN không kèm coachId — HLV hiện
   // Lớp pilates của Linh (chỉ pilates), 0 khách
   const mk = await call("/schedule/classes", {
     method: "POST", token: tokens.staff,
-    body: { name: "Lop V1", serviceType: "pilates", coachId: coach.linh.id, startAt: hoursFromNow(400), endAt: hoursFromNow(401), capacity: 5 },
+    body: { name: "Lop V1", serviceType: "pilates", format: "1:4", coachId: coach.linh.id, startAt: hoursFromNow(400), endAt: hoursFromNow(401) },
   });
   assert.equal(mk.status, 201, JSON.stringify(mk.data));
   const clsId = mk.data.class._id;
@@ -253,23 +266,26 @@ test("review-fix (biên H7): gói hết hạn HÔM NAY — buổi tối nay tr�
   const todayNoon = new Date();
   const r = await call("/packages", {
     method: "POST", token: tokens.staff,
-    body: { userId: String(kh._id), name: "Goi Het Hom Nay", serviceType: "gym", price: 100000, paidAmount: 100000, totalSessions: 5, expiresAt: todayNoon.toISOString() },
+    body: { userId: String(kh._id), name: "Goi Het Hom Nay", serviceTypes: ["gym"], format: "1:1", price: 100000, paidAmount: 100000, totalSessions: 5, expiresAt: todayNoon.toISOString() },
   });
   assert.equal(r.status, 201, JSON.stringify(r.data));
   const tonight = new Date(); tonight.setHours(23, 0, 0, 0);
   const tomorrow = new Date(tonight.getTime() + 24 * 3600 * 1000);
-  const okPkg = await chargeSession(kh._id, "gym", tonight);
+  // her-35: chargeSession nhận (bộ môn + loại hình) của LỚP, không còn 1 chuỗi serviceType
+  const okPkg = await chargeSession(kh._id, { serviceType: "gym", format: "1:1" }, tonight);
   assert.ok(okPkg, "buổi 23:00 tối nay vẫn trong hạn (hết hạn = 23:59)");
-  const failPkg = await chargeSession(kh._id, "gym", tomorrow);
+  const failPkg = await chargeSession(kh._id, { serviceType: "gym", format: "1:1" }, tomorrow);
   assert.equal(failPkg, null, "buổi ngày mai phải bị chặn (gói chỉ còn 4 buổi này đã hết hạn)");
 });
 
 test("review-fix (tương thích): gửi CẢ expiresAt lẫn durationDays -> expiresAt thắng", async () => {
   const kh = await User.findOne({ phone: "0912345678" });
   const pick = new Date(Date.now() + 5 * 24 * 3600 * 1000);
+  // Body là Yoga 1:8 vì đây là gói THỜI HẠN (không gửi totalSessions) — her-35 chỉ cho phép
+  // đúng dạng này; ở đây chỉ quan tâm expiresAt có thắng durationDays hay không
   const r = await call("/packages", {
     method: "POST", token: tokens.staff,
-    body: { userId: String(kh._id), name: "Goi Ca Hai", serviceType: "gym", price: 100000, paidAmount: 100000, expiresAt: pick.toISOString(), durationDays: 300 },
+    body: { userId: String(kh._id), name: "Goi Ca Hai", serviceTypes: ["yoga"], format: "1:8", price: 100000, paidAmount: 100000, expiresAt: pick.toISOString(), durationDays: 300 },
   });
   assert.equal(r.status, 201);
   const exp = new Date(r.data.package.expiresAt);

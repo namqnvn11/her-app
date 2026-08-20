@@ -4,10 +4,12 @@ const Trainer = require("../models/Trainer");
 const { requireAuth, requireManagement } = require("../middleware/auth");
 const { isTrainerLocked } = require("../utils/activeTrainers");
 const { isValidClassType, labelOf } = require("../utils/disciplines");
+const { normalizeClassName } = require("../utils/className");
+const { isValidFormat, FORMAT_18_SERVICE } = require("../utils/formats");
 const { runAutoSchedule } = require("../utils/autoSchedule");
 const wrap = require("../utils/asyncHandler");
 
-// her-32: LỊCH TỰ ĐỘNG — quầy (lễ tân/admin) đặt luật sinh lớp group lặp theo thứ,
+// her-32: LỊCH TỰ ĐỘNG — quầy (lễ tân/admin) đặt luật sinh lớp lặp theo thứ,
 // hệ thống tự phủ trước 7 ngày. Sửa luật = xoá tạo lại (UI tối giản).
 const router = express.Router();
 router.use(requireAuth, requireManagement);
@@ -21,7 +23,7 @@ const serialize = (r) => ({
   hour: r.hour,
   minute: r.minute,
   daysOfWeek: r.daysOfWeek,
-  capacity: r.capacity,
+  format: r.format,
   active: r.active,
 });
 
@@ -33,10 +35,14 @@ router.get("/", wrap(async (req, res) => {
 
 // POST /api/auto-schedule -- tạo luật mới (validate như tạo lớp + sinh NGAY cho 7 ngày tới)
 router.post("/", wrap(async (req, res) => {
-  const { serviceType, coachId, hour, minute, daysOfWeek, capacity } = req.body;
+  const { format, serviceType, coachId, hour, minute, daysOfWeek, name } = req.body;
   if (!coachId || hour === undefined || minute === undefined) {
     return res.status(400).json({ error: "Thiếu thông tin bắt buộc" });
   }
+  // her-36: luật cũng đặt được TÊN RIÊNG — mọi buổi luật sinh ra mang tên đó.
+  // Bỏ trống thì lấy nhãn bộ môn (hành vi cũ). Cùng luật độ dài với tạo lớp (utils/className)
+  const nameCheck = normalizeClassName(name);
+  if (nameCheck.error) return res.status(400).json({ error: nameCheck.error });
   if (!(await isValidClassType(serviceType))) {
     return res.status(400).json({ error: "Bộ môn không hợp lệ — chọn từ danh mục bộ môn" });
   }
@@ -55,9 +61,12 @@ router.post("/", wrap(async (req, res) => {
   if (!days.length || days.length !== rawDays.length || days.some((d) => !Number.isInteger(d) || d < 0 || d > 6)) {
     return res.status(400).json({ error: "Chọn ít nhất 1 thứ trong tuần" });
   }
-  const cap = Number(capacity);
-  if (!Number.isInteger(cap) || cap < 1 || cap > 100) {
-    return res.status(400).json({ error: "Sức chứa phải là số nguyên từ 1 đến 100" });
+  // her-35: loại hình quyết định sức chứa — không còn ô sức chứa trên form
+  if (!isValidFormat(format)) {
+    return res.status(400).json({ error: "Loại hình phải là 1:1, 1:2, 1:4 hoặc 1:8" });
+  }
+  if (format === "1:8" && serviceType !== FORMAT_18_SERVICE) {
+    return res.status(400).json({ error: "Loại hình 1:8 chỉ dành cho bộ môn Yoga" });
   }
   const coach = await Trainer.findById(coachId);
   if (!coach) return res.status(404).json({ error: "Không tìm thấy HLV" });
@@ -84,12 +93,12 @@ router.post("/", wrap(async (req, res) => {
 
   const rule = await AutoScheduleRule.create({
     serviceType,
-    name: await labelOf(serviceType),
+    format,
+    name: nameCheck.value || (await labelOf(serviceType)),
     coachId,
     hour: h,
     minute: m,
     daysOfWeek: days.sort((a, b) => a - b),
-    capacity: cap,
     createdBy: req.user._id,
   });
   // Sinh NGAY — buổi phải vào tầm thấy 7 ngày của khách ngay khi đặt luật, không chờ chu kỳ.

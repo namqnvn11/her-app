@@ -137,20 +137,24 @@ test("L10: server MIN_CANCEL_HOURS=2 — hủy booking cách 2h30 THÀNH CÔNG, 
     await call(B, `/bookings/${bk.id}`, { method: "DELETE", token: reception.token });
   }
 
-  // Slot test chèn thẳng DB B — luật "HLV không trùng giờ" (đợt her-04) có thể chặn việc tạo
-  // slot sát giờ hiện tại qua API tuỳ thời điểm chạy; test này chỉ kiểm tra LUẬT HỦY.
+  // Buổi test chèn thẳng DB B — luật "HLV không trùng giờ" (đợt her-04) có thể chặn việc tạo
+  // buổi sát giờ hiện tại qua API tuỳ thời điểm chạy; test này chỉ kiểm tra LUẬT HỦY.
   const connB = await mongoose.createConnection(URI_B).asPromise();
   const trainerB = await connB.collection("trainers").findOne({});
-  // H7: đặt PT cần gói loại pt — chèn cho Thảo Vy 1 gói PT trên DB B
+  // H7 (her-35): đặt buổi cần gói khớp bộ môn + loại hình — chèn cho Thảo Vy 1 gói MIX 1:1
   const vyB = await connB.collection("users").findOne({ phone: "0912345678" });
   await connB.collection("packages").insertOne({
-    userId: vyB._id, name: "PT test L10", serviceType: "pt", price: 1,
+    userId: vyB._id, name: "Gói mix test L10", serviceTypes: ["gym", "pilates"], format: "1:1", price: 1,
     totalSessions: 10, usedSessions: 0, activatedAt: new Date(), expiresAt: null,
-    pausedAt: null, paymentMethod: "cash", paidAmount: 1,
+    pausedAt: null, paymentMethod: "cash", paidAmount: 1, payments: [],
   });
-  const makeSlot = async (startH, endH) => {
-    const r = await connB.collection("ptslots").insertOne({
-      trainerId: trainerB._id,
+  let clsSeq = 0;
+  const makeClass = async (startH, endH) => {
+    const r = await connB.collection("gymclasses").insertOne({
+      name: `Buoi test L10 ${clsSeq++}`,
+      serviceType: "pilates",
+      format: "1:1",
+      coachId: trainerB._id,
       startAt: hoursFromNow(startH),
       endAt: hoursFromNow(endH),
       capacity: 1,
@@ -160,16 +164,16 @@ test("L10: server MIN_CANCEL_HOURS=2 — hủy booking cách 2h30 THÀNH CÔNG, 
   };
 
   try {
-    // Case hủy được: slot cách 2h30 (> 2h)
-    const farId = await makeSlot(2.5, 3.5);
-    const bookFar = await call(B, "/bookings", { method: "POST", token: customer.token, body: { type: "pt", slotId: farId } });
+    // Case hủy được: buổi cách 2h30 (> 2h)
+    const farId = await makeClass(2.5, 3.5);
+    const bookFar = await call(B, "/bookings", { method: "POST", token: customer.token, body: { classId: farId } });
     assert.equal(bookFar.status, 201, JSON.stringify(bookFar.data));
     const cancelFar = await call(B, `/bookings/${bookFar.data.booking.id}`, { method: "DELETE", token: customer.token });
     assert.equal(cancelFar.status, 200, "cách 2h30 với MIN=2 phải hủy được (trước đây app khoá vì hardcode 3)");
 
-    // Case bị chặn: slot cách 1h (< 2h) — message phải nói "2 tiếng" chứ không phải "3 tiếng"
-    const nearId = await makeSlot(1, 1.9);
-    const bookNear = await call(B, "/bookings", { method: "POST", token: customer.token, body: { type: "pt", slotId: nearId } });
+    // Case bị chặn: buổi cách 1h (< 2h) — message phải nói "2 tiếng" chứ không phải "3 tiếng"
+    const nearId = await makeClass(1, 1.9);
+    const bookNear = await call(B, "/bookings", { method: "POST", token: customer.token, body: { classId: nearId } });
     assert.equal(bookNear.status, 201, JSON.stringify(bookNear.data));
     const cancelNear = await call(B, `/bookings/${bookNear.data.booking.id}`, { method: "DELETE", token: customer.token });
     assert.equal(cancelNear.status, 403);
@@ -259,20 +263,24 @@ test("Review: login với phone/password không phải string -> 400, server kh�
   await login(A, "0909090909");
 });
 
-test("Review: capacity âm/chữ bị chặn khi tạo lớp; PATCH lớp không lách được quy tắc thời gian", async () => {
+test("Review: loại hình rác bị chặn khi tạo lớp; PATCH lớp không lách được quy tắc thời gian", async () => {
   const staff = await login(A, "0900000000");
   const trainerId = (await call(A, "/schedule/trainers", { token: staff.token })).data.trainers[0].id;
 
-  const negative = await call(A, "/schedule/classes", {
-    method: "POST", token: staff.token,
-    body: { name: "X", serviceType: "pilates", coachId: trainerId, startAt: hoursFromNow(170), endAt: hoursFromNow(171), capacity: -5 },
-  });
-  assert.equal(negative.status, 400);
-  assert.match(negative.data.error, /Sức chứa/);
+  // her-35: sức chứa không còn nhận từ client — input rác giờ nằm ở LOẠI HÌNH,
+  // gửi format lạ/thiếu phải 400 + { error } chứ không treo request (L1)
+  for (const format of ["1:3", -5, null, undefined]) {
+    const bad = await call(A, "/schedule/classes", {
+      method: "POST", token: staff.token,
+      body: { name: "X", serviceType: "pilates", format, coachId: trainerId, startAt: hoursFromNow(170), endAt: hoursFromNow(171) },
+    });
+    assert.equal(bad.status, 400, `format ${JSON.stringify(format)} phải bị từ chối`);
+    assert.match(bad.data.error, /Loại hình/);
+  }
 
   const created = await call(A, "/schedule/classes", {
     method: "POST", token: staff.token,
-    body: { name: "Lop de patch", serviceType: "pilates", coachId: trainerId, startAt: hoursFromNow(172), endAt: hoursFromNow(173) },
+    body: { name: "Lop de patch", serviceType: "pilates", format: "1:4", coachId: trainerId, startAt: hoursFromNow(172), endAt: hoursFromNow(173) },
   });
   assert.equal(created.status, 201);
   const id = created.data.class._id;
@@ -299,22 +307,33 @@ test("Review: search gửi lặp query (?search=a&search=b) không làm crash", 
   assert.equal(r.status, 200);
 });
 
-test("L13: gọi thẳng API tạo khung giờ quá khứ / khoảng giờ ngược -> 400", async () => {
+test("L13: gọi thẳng API tạo khung giờ quá khứ (HLV) / khoảng giờ ngược -> 400", async () => {
   const staff = await login(A, "0900000000");
   const trainerId = (await call(A, "/schedule/trainers", { token: staff.token })).data.trainers[0].id;
 
-  const past = await call(A, "/schedule/classes", {
+  // her-39 (20/08): luật "không tạo khung giờ quá khứ" chỉ còn áp cho HLV. QUẦY được dựng lại
+  // buổi ĐÃ TẬP trong quá khứ (khách tập trước, đăng ký sau) — xem testcase_her-39.
+  const trainer = await login(A, "0911111111"); // HLV Linh
+  const trainerSelfId = (await call(A, "/me", { token: trainer.token })).data.user.trainerId;
+  const pastByTrainer = await call(A, "/schedule/classes", {
     method: "POST",
-    token: staff.token,
-    body: { name: "Lop qua khu", serviceType: "pilates", coachId: trainerId, startAt: hoursFromNow(-24), endAt: hoursFromNow(-23) },
+    token: trainer.token,
+    body: { name: "Lop qua khu HLV", serviceType: "pilates", format: "1:1", coachId: trainerSelfId, startAt: hoursFromNow(-24 * 300), endAt: hoursFromNow(-24 * 300 + 1) },
   });
-  assert.equal(past.status, 400);
-  assert.match(past.data.error, /quá khứ/);
+  assert.equal(pastByTrainer.status, 400, JSON.stringify(pastByTrainer.data));
+  assert.match(pastByTrainer.data.error, /quá khứ/);
 
-  const reversed = await call(A, "/schedule/pt-slots", {
+  const pastByStaff = await call(A, "/schedule/classes", {
     method: "POST",
     token: staff.token,
-    body: { trainerId, startAt: hoursFromNow(5), endAt: hoursFromNow(4) },
+    body: { name: "Lop qua khu quay", serviceType: "pilates", format: "1:4", coachId: trainerId, startAt: hoursFromNow(-24 * 300), endAt: hoursFromNow(-24 * 300 + 1) },
+  });
+  assert.equal(pastByStaff.status, 201, `quầy phải tạo được buổi quá khứ (her-39): ${JSON.stringify(pastByStaff.data)}`);
+
+  const reversed = await call(A, "/schedule/classes", {
+    method: "POST",
+    token: staff.token,
+    body: { name: "Lop nguoc gio", serviceType: "pilates", format: "1:1", coachId: trainerId, startAt: hoursFromNow(5), endAt: hoursFromNow(4) },
   });
   assert.equal(reversed.status, 400);
   assert.match(reversed.data.error, /kết thúc phải sau/);
@@ -322,7 +341,7 @@ test("L13: gọi thẳng API tạo khung giờ quá khứ / khoảng giờ ngư�
   const valid = await call(A, "/schedule/classes", {
     method: "POST",
     token: staff.token,
-    body: { name: "Lop hop le", serviceType: "pilates", coachId: trainerId, startAt: hoursFromNow(175), endAt: hoursFromNow(176) },
+    body: { name: "Lop hop le", serviceType: "pilates", format: "1:4", coachId: trainerId, startAt: hoursFromNow(175), endAt: hoursFromNow(176) },
   });
   assert.equal(valid.status, 201, "khung giờ tương lai hợp lệ vẫn tạo được bình thường");
 });
@@ -418,7 +437,7 @@ test("L17: chặn đoán mật khẩu — sai quá số lần bị 429 kể cả
 
 // ---------- Hồi quy: luồng chính không vỡ ----------
 
-test("Hồi quy: 4 role đăng nhập, khách đặt lớp group + hủy, buổi được hoàn về gói", async () => {
+test("Hồi quy: 4 role đăng nhập, khách đặt lớp + hủy, buổi được hoàn về gói", async () => {
   for (const phone of ["0999999999", "0900000000", "0911111111", "0909090909"]) {
     await login(A, phone);
   }
@@ -432,10 +451,11 @@ test("Hồi quy: 4 role đăng nhập, khách đặt lớp group + hủy, buổi
   let booked = null;
   for (const c of classes) {
     if (c.spotsLeft === 0 || c.serviceType !== "yoga") continue;
-    const r = await call(A, "/bookings", { method: "POST", token: customer.token, body: { type: "group", classId: c.id } });
+    assert.ok(c.format, "danh sách lớp phải trả loại hình cho app hiển thị");
+    const r = await call(A, "/bookings", { method: "POST", token: customer.token, body: { classId: c.id } });
     if (r.status === 201) { booked = r.data.booking; break; }
   }
-  assert.ok(booked, "phải đặt được ít nhất 1 lớp group");
+  assert.ok(booked, "phải đặt được ít nhất 1 lớp");
   assert.equal((await call(A, "/me/package", { token: customer.token })).data.package.usedSessions, before + 1);
 
   const cancel = await call(A, `/bookings/${booked.id}`, { method: "DELETE", token: customer.token });

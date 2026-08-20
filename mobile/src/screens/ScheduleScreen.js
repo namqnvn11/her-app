@@ -1,12 +1,14 @@
 import { useState, useCallback, useEffect, useRef } from "react";
-import { View, Text, ScrollView, StyleSheet, RefreshControl, ActivityIndicator } from "react-native";
+import { View, Text, ScrollView, TouchableOpacity, StyleSheet, RefreshControl, ActivityIndicator } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
+import { Feather } from "@expo/vector-icons";
 import TopBar from "../components/TopBar";
 import SectionLabel from "../components/SectionLabel";
 import TimeRow from "../components/TimeRow";
 import AppButton from "../components/AppButton";
 import { api } from "../api/client";
 import { syncReminders } from "../utils/reminders";
+import { classTitle } from "../utils/displayName";
 import { useAuth } from "../context/AuthContext";
 import { useTheme } from "../theme";
 
@@ -37,7 +39,13 @@ export default function ScheduleScreen() {
   const [histPage, setHistPage] = useState(1);
   const [histHasMore, setHistHasMore] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
+  // her-37: mục Lịch sử gập/mở — mặc định ĐÓNG mỗi lần vào màn, đóng thì không gọi /me/history
+  const [histOpen, setHistOpen] = useState(false);
+  const [histLoading, setHistLoading] = useState(false);
+  const histOpenRef = useRef(false);
+  const histLoaded = useRef(false);
   const loadSeq = useRef(0);
+  const histSeq = useRef(0);
   const endReached = useRef(false);
   const scrollRef = useRef(null);
   const viewH = useRef(0);
@@ -48,38 +56,59 @@ export default function ScheduleScreen() {
   const [busy, setBusy] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
 
+  // Tải lại lịch sử từ trang 1 — chỉ gọi khi mục Lịch sử đang MỞ (her-37)
+  const loadHistory = useCallback(async () => {
+    const seq = ++histSeq.current;
+    setHistLoading(true);
+    try {
+      const res = await api.get("/me/history", { limit: 20, page: 1 });
+      if (seq !== histSeq.current) return;
+      setHistory(res.bookings);
+      setHistHasMore(!!res.hasMore);
+      setHistPage(1);
+      histLoaded.current = true;
+      endReached.current = false;
+      autoFillFails.current = 0;
+    } catch (err) {
+      if (seq === histSeq.current) { setErrorMsg(err.message); autoFillFails.current += 1; }
+    } finally {
+      if (seq === histSeq.current) { setHistLoading(false); setLoadingMore(false); }
+    }
+  }, []);
+
   const load = useCallback(async () => {
     const seq = ++loadSeq.current;
     setLoading(true);
     try {
       setErrorMsg("");
-      const [upcomingRes, historyRes] = await Promise.all([
-        api.get("/me/bookings"),
-        api.get("/me/history", { limit: 20, page: 1 }),
-      ]);
+      const upcomingRes = await api.get("/me/bookings");
       if (seq !== loadSeq.current) return;
       // Mục 9: đặt lại nhắc-1-tiếng theo lịch mới nhất (no-op trên web)
       syncReminders((upcomingRes.bookings || []).filter((b) => b.status === "booked"));
       setBookings(upcomingRes.bookings);
-      setHistory(historyRes.bookings);
-      setHistHasMore(!!historyRes.hasMore);
-      setHistPage(1);
-      endReached.current = false;
-      autoFillFails.current = 0;
     } catch (err) {
-      if (seq === loadSeq.current) { setErrorMsg(err.message); autoFillFails.current += 1; }
+      if (seq === loadSeq.current) setErrorMsg(err.message);
     } finally {
-      if (seq === loadSeq.current) { setLoading(false); setLoadingMore(false); }
+      if (seq === loadSeq.current) setLoading(false);
     }
-  }, []);
+    if (histOpenRef.current) loadHistory();
+  }, [loadHistory]);
+
+  const toggleHistory = useCallback(() => {
+    const next = !histOpenRef.current;
+    histOpenRef.current = next;
+    setHistOpen(next);
+    // Lần đầu mở mới tải trang 1; đóng rồi mở lại giữ nguyên dữ liệu đã tải
+    if (next && !histLoaded.current && !histLoading) loadHistory();
+  }, [loadHistory, histLoading]);
 
   // Trang lịch sử kế tiếp — append có dedupe theo id (chống lặp khi dữ liệu đổi giữa 2 trang)
   const loadMoreHistory = useCallback(async () => {
-    const seq = ++loadSeq.current;
+    const seq = ++histSeq.current;
     setLoadingMore(true);
     try {
       const res = await api.get("/me/history", { limit: 20, page: histPage + 1 });
-      if (seq !== loadSeq.current) return;
+      if (seq !== histSeq.current) return;
       setHistory((prev) => {
         const seen = new Set(prev.map((b) => String(b.id)));
         return [...prev, ...res.bookings.filter((b) => !seen.has(String(b.id)))];
@@ -89,16 +118,18 @@ export default function ScheduleScreen() {
       endReached.current = false;
       autoFillFails.current = 0;
     } catch (err) {
-      if (seq === loadSeq.current) { setErrorMsg(err.message); autoFillFails.current += 1; }
+      if (seq === histSeq.current) { setErrorMsg(err.message); autoFillFails.current += 1; }
     } finally {
-      if (seq === loadSeq.current) setLoadingMore(false);
+      if (seq === histSeq.current) setLoadingMore(false);
     }
   }, [histPage]);
 
   // Màn chưa đầy mà còn lịch sử → tự nạp tiếp đến khi cuộn được (RN-web không bắn
   // onLayout/onContentSizeChange của ScrollView — đọc thẳng DOM trên web)
   useEffect(() => {
-    if (loading || loadingMore || !histHasMore) return;
+    // her-37: mục Lịch sử đang ĐÓNG thì không tự nạp gì cả
+    if (!histOpen || !histLoaded.current) return;
+    if (loading || histLoading || loadingMore || !histHasMore) return;
     if (autoFillFails.current >= 2) return;
     let ch = contentH.current;
     let vh = viewH.current;
@@ -110,10 +141,22 @@ export default function ScheduleScreen() {
     if (ch > vh + 40) return;
     loadMoreHistory();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loading, loadingMore, histHasMore, histPage]);
+  }, [loading, histLoading, loadingMore, histHasMore, histPage, histOpen]);
 
   useFocusEffect(
     useCallback(() => {
+      // Mỗi lần vào màn: mục Lịch sử về mặc định ĐÓNG, dữ liệu cũ bỏ đi (her-37)
+      histOpenRef.current = false;
+      histLoaded.current = false;
+      histSeq.current += 1; // huỷ mọi lượt tải lịch sử còn dở
+      setHistOpen(false);
+      setHistory([]);
+      setHistPage(1);
+      setHistHasMore(false);
+      setHistLoading(false);
+      setLoadingMore(false);
+      endReached.current = false;
+      autoFillFails.current = 0;
       load();
     }, [load])
   );
@@ -141,10 +184,11 @@ export default function ScheduleScreen() {
       refreshControl={<RefreshControl refreshing={loading} onRefresh={load} tintColor={c.primary} />}
       scrollEventThrottle={100}
       onScroll={({ nativeEvent: { layoutMeasurement, contentOffset, contentSize } }) => {
+        if (!histOpen) return; // đóng thì không tự nạp thêm lịch sử
         if (contentSize.height <= layoutMeasurement.height || contentOffset.y <= 0) return;
         const nearBottom = layoutMeasurement.height + contentOffset.y >= contentSize.height - 400;
         if (!nearBottom) { endReached.current = false; return; }
-        if (endReached.current || loading || loadingMore || !histHasMore) return;
+        if (endReached.current || loading || histLoading || loadingMore || !histHasMore) return;
         endReached.current = true;
         loadMoreHistory();
       }}
@@ -167,8 +211,14 @@ export default function ScheduleScreen() {
               key={b.id}
               time={fmtTime(b.startAt)}
               sub={fmtDay(b.startAt)}
-              title={b.title}
-              meta={`${b.coach} · ${b.type === "pt" ? "PT 1:1" : "Group"}`}
+              // her-38: dòng đậm thống nhất — loại hình đã lên dòng đậm nên bỏ khỏi meta.
+              // Câu nhắc sát giờ đi vào meta để nằm ngay dưới dòng đậm (children đệm xa hơn).
+              title={classTitle(b)}
+              meta={
+                b.status === "booked" && locked
+                  ? `Còn dưới ${minCancelHours} giờ — liên hệ lễ tân để hủy.`
+                  : null
+              }
               last={i === bookings.length - 1}
               right={
                 b.status !== "booked" ? (
@@ -183,11 +233,7 @@ export default function ScheduleScreen() {
                 ) : null
               }
             >
-              {b.status !== "booked" ? null : locked ? (
-                <Text style={[styles.lockedText, { color: c.inkSoft }]}>
-                  Còn dưới {minCancelHours} giờ — liên hệ lễ tân để hủy.
-                </Text>
-              ) : confirmId === b.id ? (
+              {b.status !== "booked" || locked ? null : confirmId === b.id ? (
                 <View style={{ flexDirection: "row", gap: 8 }}>
                   <View style={{ flex: 1 }}>
                     <AppButton variant="ghost" onPress={() => setConfirmId(null)}>
@@ -205,32 +251,42 @@ export default function ScheduleScreen() {
           );
         })}
 
-        <SectionLabel>Lịch sử</SectionLabel>
-        {history.length === 0 && !loading && (
-          <Text style={[styles.empty, { color: c.inkSoft }]}>Chưa có lịch sử.</Text>
+        <TouchableOpacity activeOpacity={0.7} onPress={toggleHistory} style={styles.histHeader}>
+          <SectionLabel style={{ marginTop: 0, marginBottom: 0 }}>Lịch sử</SectionLabel>
+          <Feather name={histOpen ? "chevron-up" : "chevron-down"} size={16} color={c.inkSoft} />
+        </TouchableOpacity>
+
+        {histOpen && (
+          <>
+            {histLoading && history.length === 0 && (
+              <ActivityIndicator style={{ marginTop: 14 }} color={c.primary} />
+            )}
+            {history.length === 0 && !histLoading && (
+              <Text style={[styles.empty, { color: c.inkSoft }]}>Chưa có lịch sử.</Text>
+            )}
+            {history.map((h, i) => (
+              <TimeRow
+                key={h.id}
+                time={fmtTime(h.startAt)}
+                sub={fmtDay(h.startAt)}
+                title={classTitle(h)}
+                last={i === history.length - 1}
+                right={
+                  <Text
+                    style={{
+                      fontSize: 11,
+                      fontWeight: "700",
+                      color: c.primary,
+                    }}
+                  >
+                    {STATUS_LABEL[h.status] || h.status}
+                  </Text>
+                }
+              />
+            ))}
+            {loadingMore && <ActivityIndicator style={{ marginTop: 16 }} color={c.primary} />}
+          </>
         )}
-        {history.map((h, i) => (
-          <TimeRow
-            key={h.id}
-            time={fmtTime(h.startAt)}
-            sub={fmtDay(h.startAt)}
-            title={h.title}
-            meta={h.coach}
-            last={i === history.length - 1}
-            right={
-              <Text
-                style={{
-                  fontSize: 11,
-                  fontWeight: "700",
-                  color: c.primary,
-                }}
-              >
-                {STATUS_LABEL[h.status] || h.status}
-              </Text>
-            }
-          />
-        ))}
-        {loadingMore && <ActivityIndicator style={{ marginTop: 16 }} color={c.primary} />}
       </View>
     </ScrollView>
   );
@@ -240,5 +296,5 @@ const styles = StyleSheet.create({
   error: { fontSize: 12.5, marginTop: 14, fontWeight: "700" },
   empty: { fontSize: 13, marginTop: 12 },
   smallBtn: { paddingVertical: 7, paddingHorizontal: 13 },
-  lockedText: { fontSize: 11.5, lineHeight: 17 },
+  histHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 20, marginBottom: 2, paddingVertical: 6 },
 });

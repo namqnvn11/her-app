@@ -39,11 +39,14 @@ router.get("/settings", adminOnly, wrap(async (req, res) => {
         rate: r
           ? {
               baseSalary: r.baseSalary,
-              groupAmount: r.groupAmount,
-              groupPer: r.groupPer,
-              pt1Amount: r.pt1Amount,
-              ptGroupAmount: r.ptGroupAmount,
-              ptGroupPer: r.ptGroupPer,
+              f11Amount: r.f11Amount,
+              f11Per: r.f11Per,
+              f12Amount: r.f12Amount,
+              f12Per: r.f12Per,
+              f14Amount: r.f14Amount,
+              f14Per: r.f14Per,
+              f18Amount: r.f18Amount,
+              f18Per: r.f18Per,
               effectiveFrom: r.effectiveFrom,
             }
           : null,
@@ -61,15 +64,18 @@ router.post("/settings/:trainerId", adminOnly, wrap(async (req, res) => {
   const trainer = await Trainer.findById(req.params.trainerId);
   if (!trainer) return res.status(404).json({ error: "Không tìm thấy HLV" });
 
+  // her-35: mức hoa hồng theo LOẠI HÌNH buổi (1:1 / 1:2 / 1:4 / 1:8)
   const fields = [
     ["baseSalary", "Lương cứng"],
-    ["groupAmount", "Hoa hồng lớp nhóm"],
-    ["pt1Amount", "Hoa hồng PT 1:1"],
-    ["ptGroupAmount", "Hoa hồng PT nhóm"],
+    ["f11Amount", "Hoa hồng buổi 1:1"],
+    ["f12Amount", "Hoa hồng buổi 1:2"],
+    ["f14Amount", "Hoa hồng buổi 1:4"],
+    ["f18Amount", "Hoa hồng buổi 1:8"],
   ];
+  const perFields = ["f11Per", "f12Per", "f14Per", "f18Per"];
   // Body không gửi mức nào -> chặn (review her-12 V5): tránh client tưởng partial-update
   // mà vô tình tạo bản ghi mức TOÀN 0 đè mức hiện hành
-  const hasAny = [...fields.map(([k]) => k), "groupPer", "ptGroupPer"].some((k) => req.body?.[k] !== undefined);
+  const hasAny = [...fields.map(([k]) => k), ...perFields].some((k) => req.body?.[k] !== undefined);
   if (!hasAny) {
     return res.status(400).json({ error: "Chưa nhập mức nào — gửi đủ các mức muốn áp dụng (0 nếu không trả)" });
   }
@@ -79,7 +85,7 @@ router.post("/settings/:trainerId", adminOnly, wrap(async (req, res) => {
     if (parsed.error) return res.status(400).json({ error: parsed.error });
     doc[key] = parsed.value;
   }
-  for (const key of ["groupPer", "ptGroupPer"]) {
+  for (const key of perFields) {
     const v = req.body[key];
     if (v !== undefined && v !== "session" && v !== "attendee") {
       return res.status(400).json({ error: "Cách tính phải là theo buổi (session) hoặc theo khách (attendee)" });

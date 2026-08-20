@@ -46,7 +46,9 @@ function fmt(year, month, day, hour, minute, mode) {
 }
 
 // mode: "datetime" (mặc định) | "date" (chỉ ngày — vd hạn gói) | "time" (chỉ giờ — vd lịch tự động)
-export default function DateTimeField({ value, onChange, mode = "datetime", placeholder }) {
+// allowPast (her-39): mặc định false — ngày trước hôm nay bị mờ/khoá như cũ. Màn xếp lịch của
+// QUẦY truyền true để dựng lại buổi ĐÃ TẬP trong quá khứ (server cũng chỉ mở cho quầy).
+export default function DateTimeField({ value, onChange, mode = "datetime", placeholder, allowPast = false }) {
   const { c } = useTheme();
   const parsed = parseValue(value, mode);
   const now = new Date();
@@ -77,7 +79,8 @@ export default function DateTimeField({ value, onChange, mode = "datetime", plac
   const lead = (first.getDay() + 6) % 7;
   const cells = [...Array(lead).fill(null), ...Array.from({ length: daysInMonth }, (_, i) => i + 1)];
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const isPastDay = (d) => new Date(cursor.getFullYear(), cursor.getMonth(), d) < today;
+  const isPastDay = (d) =>
+    !allowPast && new Date(cursor.getFullYear(), cursor.getMonth(), d) < today;
   const isSelDay = (d) =>
     sel.day === d && sel.month === cursor.getMonth() + 1 && sel.year === cursor.getFullYear();
 

@@ -15,6 +15,7 @@ const SECRET = "testsecret";
 
 const Booking = require("../src/models/Booking");
 const GymClass = require("../src/models/GymClass");
+const Package = require("../src/models/Package");
 
 let proc;
 
@@ -157,9 +158,11 @@ test("L6: sweep lúc boot chuyển booking qua giờ thành completed, không đ
 
   const base = {
     userId: customerId,
-    type: "group",
     trainerId: trainerDoc._id,
     title: "Sweep test",
+    // her-35: booking mang snapshot bộ môn + loại hình
+    serviceType: "pilates",
+    format: "1:4",
   };
   // Mỗi booking một classId riêng — unique partial index (userId+classId, status booked)
   // chặn 2 booking cùng khoá, kể cả khi chèn thẳng DB (đúng thiết kế).
@@ -168,10 +171,11 @@ test("L6: sweep lúc boot chuyển booking qua giờ thành completed, không đ
     [-3, -6, 50].map((h) => ({
       name: `Sweep class ${h}`,
       serviceType: "pilates",
+      format: "1:4",
       coachId: trainerDoc._id,
       startAt: hoursFromNow(h),
       endAt: hoursFromNow(h + 1),
-      capacity: 8,
+      capacity: 4,
     }))
   );
   const pastBooked = await Booking.create({ ...base, classId: classes[0]._id, startAt: hoursFromNow(-3), endAt: hoursFromNow(-2), status: "booked" });
@@ -201,18 +205,28 @@ test("L6: sweep lúc boot chuyển booking qua giờ thành completed, không đ
 
 // ---------- L7: chặn sửa lớp có khách (cập nhật 16/08/2026: ĐỔI HLV thì được — her-09) ----------
 
-test("L7: lớp có khách đặt — chặn đổi giờ/tên, ĐỔI HLV ĐƯỢC (16/08), vẫn cho tăng sức chứa", async () => {
+test("L7: lớp có khách đặt — chặn đổi giờ/tên/loại hình, ĐỔI HLV ĐƯỢC (16/08)", async () => {
   const reception = await login("0900000000");
   const customer = await login("0909090909");
   const trainers = (await call(S, "/schedule/trainers", { token: reception.token })).data.trainers;
 
+  // Gói khớp (bộ môn pilates + loại hình 1:2) cho khách — không phụ thuộc gói của seed
+  const customerId = (await mongoose.connection.db.collection("users").findOne({ phone: "0909090909" }))._id;
+  await Package.create({
+    userId: customerId, name: "Pilates 1:2 test L7", serviceTypes: ["pilates"], format: "1:2",
+    price: 1, totalSessions: 10, activatedAt: new Date(), expiresAt: hoursFromNow(24 * 60),
+  });
+
   const created = await call(S, "/schedule/classes", {
     method: "POST",
     token: reception.token,
-    body: { name: "Lop co khach", serviceType: "pilates", coachId: trainers[0].id, startAt: hoursFromNow(280), endAt: hoursFromNow(281), capacity: 5 },
+    // her-35: sức chứa KHÔNG nhận từ client — capacity gửi kèm bị bỏ qua, luôn theo loại hình
+    body: { name: "Lop co khach", serviceType: "pilates", format: "1:2", coachId: trainers[0].id, startAt: hoursFromNow(280), endAt: hoursFromNow(281), capacity: 99 },
   });
+  assert.equal(created.status, 201, JSON.stringify(created.data));
   const cls = created.data.class;
-  const booked = await call(S, "/bookings", { method: "POST", token: customer.token, body: { type: "group", classId: cls._id } });
+  assert.equal(cls.capacity, 2, "sức chứa phải theo loại hình 1:2, không nghe client");
+  const booked = await call(S, "/bookings", { method: "POST", token: customer.token, body: { classId: cls._id } });
   assert.equal(booked.status, 201, JSON.stringify(booked.data));
 
   for (const body of [
@@ -234,15 +248,17 @@ test("L7: lớp có khách đặt — chặn đổi giờ/tên, ĐỔI HLV ĐƯ�
   const bk = await Booking.findOne({ classId: cls._id, status: "booked" });
   assert.equal(bk.trainerId.toString(), trainers[1].id, "booking của khách phải theo HLV mới");
 
-  const capUp = await call(S, `/schedule/classes/${cls._id}`, { method: "PATCH", token: reception.token, body: { capacity: 8 } });
-  assert.equal(capUp.status, 200, "tăng sức chứa vẫn phải được phép");
-  assert.equal(capUp.data.class.capacity, 8);
+  // her-35: đổi LOẠI HÌNH kéo theo đổi sức chứa -> lớp đã có khách thì cấm
+  const changeFormat = await call(S, `/schedule/classes/${cls._id}`, { method: "PATCH", token: reception.token, body: { format: "1:4" } });
+  assert.equal(changeFormat.status, 400, "đổi loại hình lớp đã có khách phải bị chặn");
+  assert.match(changeFormat.data.error, /loại hình/i);
+  assert.equal((await GymClass.findById(cls._id)).capacity, 2, "sức chứa không được đổi");
 
   // Lớp CHƯA có khách vẫn sửa giờ bình thường
   const free = await call(S, "/schedule/classes", {
     method: "POST",
     token: reception.token,
-    body: { name: "Lop trong", serviceType: "pilates", coachId: trainers[0].id, startAt: hoursFromNow(282), endAt: hoursFromNow(283) },
+    body: { name: "Lop trong", serviceType: "pilates", format: "1:2", coachId: trainers[0].id, startAt: hoursFromNow(282), endAt: hoursFromNow(283) },
   });
   const move = await call(S, `/schedule/classes/${free.data.class._id}`, {
     method: "PATCH",
@@ -285,48 +301,43 @@ test("Review: HLV bị khoá — server chặn MỌI đường đặt/xếp lị
   );
   const linhTrainerId = linhAcc.trainerId;
 
+  // Buổi sắp tới của Linh (mọi buổi đều là lớp — her-35)
+  const linhClass = await GymClass.findOne({ coachId: linhTrainerId, startAt: { $gt: hoursFromNow(24) } });
+  assert.ok(linhClass, "seed phải có buổi sắp tới của HLV Linh");
+
   await call(S, `/accounts/${linhAcc.id}`, { method: "PATCH", token: admin.token, body: { isActive: false } });
   try {
-    // Lớp Group của Linh biến mất khỏi /api/classes
+    // Buổi của Linh biến mất khỏi /api/classes
     const classList = await call(S, "/classes", { token: customer.token });
     assert.ok(
-      classList.data.classes.every((c) => String(c.coachId || "") !== String(linhTrainerId)),
-      "lớp của HLV khoá không được hiện cho khách"
+      !classList.data.classes.some((c) => String(c.id) === String(linhClass._id)),
+      "buổi của HLV khoá không được hiện cho khách"
     );
 
-    // Đặt thẳng bằng classId của lớp Linh (tải trước lúc khoá) -> 400, không trừ buổi
-    const before = (await call(S, "/me/package", { token: customer.token })).data.package.usedSessions;
-    const linhClass = await GymClass.findOne({ coachId: linhTrainerId, startAt: { $gt: hoursFromNow(24) } });
+    // Đặt thẳng bằng classId của Linh (tải trước lúc khoá) -> 400, không trừ buổi
+    const before = (await call(S, "/me/package", { token: customer.token })).data.package?.usedSessions ?? null;
     const bookClass = await call(S, "/bookings", {
       method: "POST",
       token: customer.token,
-      body: { type: "group", classId: linhClass._id },
+      body: { classId: linhClass._id },
     });
-    assert.equal(bookClass.status, 400);
+    assert.equal(bookClass.status, 400, JSON.stringify(bookClass.data));
     assert.match(bookClass.data.error, /tạm ngưng hoạt động/);
-    assert.equal((await call(S, "/me/package", { token: customer.token })).data.package.usedSessions, before);
+    assert.equal(
+      (await call(S, "/me/package", { token: customer.token })).data.package?.usedSessions ?? null,
+      before,
+      "đặt hụt không được trừ buổi"
+    );
 
-    // Đặt thẳng bằng slotId của Linh -> 400
-    const linhSlot = await mongoose.connection.db
-      .collection("ptslots")
-      .findOne({ trainerId: linhTrainerId ? new mongoose.Types.ObjectId(linhTrainerId) : null, bookedCount: 0, startAt: { $gt: hoursFromNow(24) } });
-    const bookSlot = await call(S, "/bookings", {
-      method: "POST",
-      token: customer.token,
-      body: { type: "pt", slotId: linhSlot._id },
-    });
-    assert.equal(bookSlot.status, 400);
-    assert.match(bookSlot.data.error, /tạm ngưng hoạt động/);
-
-    // Lễ tân xếp lịch MỚI cho Linh -> 400
+    // Lễ tân xếp buổi MỚI cho Linh -> 400
     const reception = await login("0900000000");
-    const newSlot = await call(S, "/schedule/pt-slots", {
+    const newClass = await call(S, "/schedule/classes", {
       method: "POST",
       token: reception.token,
-      body: { trainerId: linhTrainerId, startAt: hoursFromNow(200), endAt: hoursFromNow(201) },
+      body: { serviceType: "pilates", format: "1:1", coachId: linhTrainerId, startAt: hoursFromNow(200), endAt: hoursFromNow(201) },
     });
-    assert.equal(newSlot.status, 400);
-    assert.match(newSlot.data.error, /bị khoá tài khoản/);
+    assert.equal(newClass.status, 400, JSON.stringify(newClass.data));
+    assert.match(newClass.data.error, /bị khoá tài khoản/);
   } finally {
     await call(S, `/accounts/${linhAcc.id}`, { method: "PATCH", token: admin.token, body: { isActive: true } });
   }
@@ -336,11 +347,18 @@ test("Review: không hủy được booking đã 'Đã tập' (sweep xong thì c
   const reception = await login("0900000000");
   const customerId = (await mongoose.connection.db.collection("users").findOne({ phone: "0909090909" }))._id;
   const trainerDoc = await mongoose.connection.db.collection("trainers").findOne({});
+  // her-35: booking bắt buộc có classId — dựng luôn lớp quá khứ tương ứng
+  const doneClass = await GymClass.create({
+    name: "Da tap xong", serviceType: "pilates", format: "1:1", coachId: trainerDoc._id,
+    startAt: hoursFromNow(-4), endAt: hoursFromNow(-3), capacity: 1, bookedCount: 1,
+  });
   const done = await Booking.create({
     userId: customerId,
-    type: "group",
+    classId: doneClass._id,
     trainerId: trainerDoc._id,
     title: "Da tap xong",
+    serviceType: "pilates",
+    format: "1:1",
     startAt: hoursFromNow(-4),
     endAt: hoursFromNow(-3),
     status: "completed",
@@ -348,6 +366,7 @@ test("Review: không hủy được booking đã 'Đã tập' (sweep xong thì c
   const r = await call(S, `/bookings/${done._id}`, { method: "DELETE", token: reception.token });
   assert.equal(r.status, 400);
   await Booking.deleteOne({ _id: done._id });
+  await GymClass.deleteOne({ _id: doneClass._id });
 });
 
 // ---------- Hồi quy ----------

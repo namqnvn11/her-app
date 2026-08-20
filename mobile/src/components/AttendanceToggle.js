@@ -4,7 +4,7 @@ import { api } from "../api/client";
 import { useAuth } from "../context/AuthContext";
 import { useTheme } from "../theme";
 
-// Cặp nút điểm danh Đến/Vắng (mục 5) — dùng chung cho RosterSheet và dòng buổi PT.
+// Cặp nút điểm danh Đến/Vắng (mục 5) — dùng trong RosterSheet (danh sách khách của buổi).
 // Chỉ hiện khi tới giờ (server cũng chặn); trạng thái đang chọn được tô đậm, bấm lại để sửa.
 // Số phút mở trước giờ lấy từ config server (C5 — không ghi cứng ở app); 30 chỉ là dự phòng
 // khi config chưa kịp về.
@@ -12,14 +12,18 @@ export function attendanceOpen(startAt, openBeforeMinutes = 30) {
   return Date.now() >= new Date(startAt).getTime() - openBeforeMinutes * 60 * 1000;
 }
 
-export default function AttendanceToggle({ bookingId, status, startAt, onChanged, onError, canClear = false }) {
+export default function AttendanceToggle({ bookingId, status, startAt, attendanceAt = undefined, onChanged, onError, canClear = false }) {
   const { c } = useTheme();
   const { config } = useAuth();
   const [busy, setBusy] = useState(false);
   const openBefore = config?.attendanceOpenBeforeMinutes ?? 30;
   if (!attendanceOpen(startAt, openBefore) || status === "cancelled") return null;
 
-  const marked = status === "completed" || status === "no_show";
+  // her-40: buổi qua giờ được hệ thống tự chuyển "đã tập" (sweep) mang status "completed"
+  // nhưng attendanceAt = null → CHƯA điểm danh thật, không tô đậm nút "Đến".
+  // Nơi gọi không truyền attendanceAt (undefined) thì giữ nguyên cách cũ theo status.
+  const reallyMarked = attendanceAt !== null;
+  const marked = (status === "completed" || status === "no_show") && reallyMarked;
   const mark = async (present) => {
     if (busy) return;
     setBusy(true);
@@ -33,7 +37,7 @@ export default function AttendanceToggle({ bookingId, status, startAt, onChanged
     }
   };
 
-  const isPresent = status === "completed";
+  const isPresent = status === "completed" && reallyMarked;
   const isAbsent = status === "no_show";
   return (
     <View style={styles.row}>

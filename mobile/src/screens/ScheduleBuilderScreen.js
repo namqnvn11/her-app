@@ -12,6 +12,8 @@ import RosterSheet from "../components/RosterSheet";
 import ConfirmSheet from "../components/ConfirmSheet";
 import { api } from "../api/client";
 import { parseQuickDateTime } from "../utils/quickDateTime";
+import { FORMATS, FORMAT_18_SERVICE, disciplinesFor, coachesFor } from "../utils/formats";
+import { classTitle } from "../utils/displayName";
 import { useTheme } from "../theme";
 
 function fmtTime(d) {
@@ -38,7 +40,7 @@ function groupByDay(items) {
   return groups;
 }
 // her-21: gom "Lịch khách" + "Xếp lịch" thành 1 tab "Lịch tập" — lọc theo THỜI GIAN,
-// lớp group + khung PT trộn chung 1 danh sách theo ngày (chốt 16/08)
+// mọi buổi chung 1 danh sách theo ngày (chốt 16/08)
 // her-25: "Tất cả" (trộn lịch sử + tương lai, dùng lâu không cuộn nổi) đổi thành "Lịch sử" —
 // CHỈ buổi đã qua, ngày gần nhất lên đầu rồi lùi dần (chốt 16/08)
 const TABS = [
@@ -46,8 +48,17 @@ const TABS = [
   ["upcoming", "Sắp tới"],
   ["past", "Lịch sử"],
 ];
+// her-40 (20/08): "buổi ĐÃ CÓ KHÁCH" phải tính theo SỐ CHỖ ĐÃ GIỮ, không theo customerNames.
+// customerNames chỉ gồm khách còn trạng thái "booked": buổi qua giờ bị hệ thống tự chuyển
+// "đã tập" (sweep) sẽ trả rỗng dù ghế vẫn giữ → dòng hiện "chưa có khách đặt" và chìa nút
+// Sửa/Xoá (server vẫn chặn 400 nhưng UI nói sai — lỗi chủ dự án bắt 20/08).
+// Server khoá sửa/xoá theo bookedCount = capacity - spotsLeft, app dùng ĐÚNG con số đó.
+function bookedOf(x) {
+  const seats = Math.max((x?.capacity ?? 0) - (x?.spotsLeft ?? 0), 0);
+  return Math.max(seats, x?.customerNames?.length || 0);
+}
 // her-19: danh mục bộ môn lấy từ server (DB) — thêm môn mới không phải sửa app.
-// Bản thiết kế bỏ ô thời lượng — mọi khung giờ mặc định 60 phút
+// Bản thiết kế bỏ ô thời lượng — mọi buổi mặc định 60 phút
 const DEFAULT_DURATION_MINUTES = 60;
 
 export default function ScheduleBuilderScreen() {
@@ -56,32 +67,34 @@ export default function ScheduleBuilderScreen() {
   const [trainers, setTrainers] = useState([]);
   const [disciplines, setDisciplines] = useState([]); // [[key, label]] từ /disciplines
   const [classes, setClasses] = useState([]);
-  const [ptSlots, setPtSlots] = useState([]);
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState("");
   // toast: { msg, isError } — lỗi hiện icon/màu riêng, không giống thông báo thành công
   const [toast, setToast] = useState(null);
-  const [busy, setBusy] = useState(false); // chặn bấm đúp tạo/xoá khung giờ
+  const [busy, setBusy] = useState(false); // chặn bấm đúp tạo/xoá buổi
 
-  // Form tạo khung giờ nằm trong bottom sheet — bấm nút nổi "+ Khung giờ mới" để mở
+  // Form tạo buổi nằm trong bottom sheet — bấm nút nổi "+" để mở
   const [sheetOpen, setSheetOpen] = useState(false);
-  // Sheet SỬA khung (mục 4): {kind:"group"|"pt", item} — khung có khách chỉ đổi được HLV (16/08)
+  // Sheet SỬA buổi (mục 4): item của lớp — lớp có khách chỉ đổi được HLV (16/08)
   const [editTarget, setEditTarget] = useState(null);
-  const [editForm, setEditForm] = useState({ coachId: "", discipline: "pilates", when: "", capacity: "8" });
+  // her-36: name = tên riêng của buổi (tuỳ chọn, bỏ trống thì server lấy tên bộ môn)
+  const [editForm, setEditForm] = useState({ format: "1:4", discipline: "", coachId: "", name: "", when: "" });
   const [editError, setEditError] = useState("");
-  // Sheet danh sách khách của lớp
-  // Danh sách khách của 1 buổi: { classId } (lớp group) | { slotId } (khung PT — her-20)
+  // Sheet danh sách khách của 1 buổi: { classId }
   const [roster, setRoster] = useState(null);
-  // her-17: xoá khung giờ phải qua hộp xác nhận — { kind: "group"|"pt", item } | null
+  // her-17: xoá buổi phải qua hộp xác nhận — item của lớp | null
   const [confirmDelete, setConfirmDelete] = useState(null);
   // Lỗi lúc tạo hiện NGAY TRONG sheet — toast ngoài màn bị Modal che mất (L8)
   const [sheetError, setSheetError] = useState("");
-  // her-21: loại khung (group/pt) chọn NGAY TRONG form tạo — không còn tab con Lớp/PT
-  const [form, setForm] = useState({ kind: "group", discipline: "pilates", coachId: "", when: "", capacity: "8", ptCapacity: "1" });
+  // her-35: thứ tự form = loại hình → bộ môn → HLV → ngày giờ (chốt 19/08)
+  const [form, setForm] = useState({ format: "1:4", discipline: "", coachId: "", name: "", when: "" });
 
   // her-21: booking để đếm điểm danh + lịch sử (tab Lịch sử) — kèm token chống response
   // về muộn (review her-20 V2)
   const [bookings, setBookings] = useState([]);
+  // her-39: tab Lịch sử còn nguồn thứ 2 — LỚP QUÁ KHỨ CHƯA CÓ KHÁCH (quầy vừa dựng lại buổi
+  // đã tập). Dựng từ bookings thôi thì buổi trống vô hình, không có đường vào để add khách.
+  const [pastClasses, setPastClasses] = useState([]);
   const [hasMore, setHasMore] = useState(false);
   const [page, setPage] = useState(1);
   // her-22: ô tìm lọc DANH SÁCH BUỔI theo bộ môn / tên HLV / tên lớp — lọc ngay khi gõ
@@ -110,10 +123,19 @@ export default function ScheduleBuilderScreen() {
     else setLoadingMore(true);
     try {
       setErrorMsg("");
-      // Trang sau chỉ cần thêm booking — không tải lại HLV/lớp/khung/danh mục (cuộn lịch sử
-      // dài mà mỗi trang kéo cả 5 API thì nặng vô ích — review her-26 b4)
+      // Trang sau chỉ cần thêm booking — không tải lại HLV/lớp/danh mục (cuộn lịch sử
+      // dài mà mỗi trang kéo cả 4 API thì nặng vô ích — review her-26 b4)
       if (p > 1) {
         const more = await api.get("/management/bookings", { range: t, page: p, limit: t === "past" ? 20 : 100 });
+        // her-39: cuộn sâu vào lịch sử thì nới luôn cửa sổ lớp quá khứ theo trang (30 ngày/trang)
+        if (t === "past") {
+          const olds = await api.get("/schedule/classes", {
+            from: new Date(Date.now() - p * 30 * 24 * 3600 * 1000).toISOString(),
+            to: new Date().toISOString(),
+          });
+          if (seq !== loadSeq.current) return;
+          setPastClasses(olds.classes);
+        }
         if (seq !== loadSeq.current) return;
         setBookings((prev) => {
           const seen = new Set(prev.map((b) => String(b.id)));
@@ -130,17 +152,22 @@ export default function ScheduleBuilderScreen() {
       // from = ĐẦU hôm nay: buổi sáng nay đã qua vẫn phải hiện trong tab Hôm nay để điểm danh
       const from = new Date(); from.setHours(0, 0, 0, 0);
       const to = new Date(Date.now() + windowRef.current * 24 * 3600 * 1000).toISOString();
-      const [trainersRes, classesRes, slotsRes, discRes, bookingsRes] = await Promise.all([
+      // her-39: tab Lịch sử tải thêm lớp ĐÃ QUA (30 ngày gần nhất) để buổi trống vẫn hiện
+      const pastFrom = new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString();
+      const [trainersRes, classesRes, discRes, bookingsRes, pastRes] = await Promise.all([
         api.get("/schedule/trainers"),
         api.get("/schedule/classes", { from: from.toISOString(), to }),
-        api.get("/schedule/pt-slots", { from: from.toISOString(), to }),
         api.get("/disciplines"),
         // Điểm danh + lịch sử — range theo tab đang xem. Lịch sử tải TỪNG TRANG NHỎ (20)
         // cho nhẹ, cuộn cuối tự tải tiếp (her-26); tab khác giữ 100 vì booking còn dùng
         // để đếm tóm tắt đến/vắng
         api.get("/management/bookings", { range: t, page: p, limit: t === "past" ? 20 : 100 }),
+        t === "past"
+          ? api.get("/schedule/classes", { from: pastFrom, to: new Date().toISOString() })
+          : Promise.resolve({ classes: [] }),
       ]);
       if (seq !== loadSeq.current) return; // đã có lần tải mới hơn (review her-20 V2)
+      setPastClasses(pastRes.classes);
       // Append có DEDUPE theo id: dữ liệu đổi giữa 2 lần "Tải thêm" (offset lệch) có thể
       // trả lặp bản ghi trang trước → khách bị đếm đôi trong dòng gộp (review her-25)
       setBookings((prev) => {
@@ -157,21 +184,16 @@ export default function ScheduleBuilderScreen() {
       setTrainers(trainersRes.trainers);
       const discList = discRes.disciplines.map((d) => [d.key, d.label]);
       setDisciplines(discList);
-      // review her-19 V5: bộ môn mặc định phải nằm trong danh mục thật
-      setForm((f) => (discList.some(([k]) => k === f.discipline) ? f : { ...f, discipline: discList[0]?.[0] || "" }));
       setClasses(classesRes.classes);
-      setPtSlots(slotsRes.slots);
       setForm((f) => {
-        // review her-19 V6: HLV preselect phải QUA LỌC chuyên môn của bộ môn đang chọn.
-        // Đang chọn loại KHUNG PT thì pool là TOÀN BỘ HLV — không thì HLV không có chuyên
-        // môn của bộ môn đang treo bị bỏ chọn sau mỗi lần tải lại (review her-21 N5)
-        const pool = f.kind === "pt"
-          ? trainersRes.trainers
-          : trainersRes.trainers.filter(
-              (t) => !(t.specialties || []).length || t.specialties.includes(f.discipline)
-            );
+        // review her-19 V5: bộ môn mặc định phải nằm trong danh mục thật (và hợp loại hình
+        // đang chọn — 1:8 chỉ Yoga); V6: HLV preselect phải QUA LỌC chuyên môn bộ môn đó
+        const allowed = disciplinesFor(discList, f.format);
+        const discipline = allowed.some(([k]) => k === f.discipline) ? f.discipline : allowed[0]?.[0] || "";
+        const pool = coachesFor(trainersRes.trainers, discipline);
         return {
           ...f,
+          discipline,
           coachId: pool.some((t) => t.id === f.coachId) ? f.coachId : pool[0]?.id || "",
         };
       });
@@ -204,18 +226,14 @@ export default function ScheduleBuilderScreen() {
     setLoadingMore(true);
     try {
       const from = new Date(); from.setHours(0, 0, 0, 0);
-      const prevCount = classes.length + ptSlots.length;
+      const prevCount = classes.length;
       while (windowRef.current < maxDays) {
         windowRef.current = Math.min(windowRef.current + 30, maxDays);
         const to = new Date(Date.now() + windowRef.current * 24 * 3600 * 1000).toISOString();
-        const [cr, sr] = await Promise.all([
-          api.get("/schedule/classes", { from: from.toISOString(), to }),
-          api.get("/schedule/pt-slots", { from: from.toISOString(), to }),
-        ]);
+        const cr = await api.get("/schedule/classes", { from: from.toISOString(), to });
         if (seq !== loadSeq.current) return;
         setClasses(cr.classes);
-        setPtSlots(sr.slots);
-        if (cr.classes.length + sr.slots.length > prevCount) break; // có buổi mới — dừng, hiện ra
+        if (cr.classes.length > prevCount) break; // có buổi mới — dừng, hiện ra
       }
       endReached.current = false;
       autoFillFails.current = 0;
@@ -272,6 +290,7 @@ export default function ScheduleBuilderScreen() {
   const changeTab = (t) => {
     setHasMore(false);
     setPage(1);
+    setPastClasses([]); // nguồn lớp quá khứ chỉ dùng cho tab Lịch sử (her-39)
     endReached.current = false; // không kẹt khoá từ tab cũ (review her-26 b2)
     windowRef.current = 30; // cửa sổ Sắp tới về mặc định
     setTab(t);
@@ -305,64 +324,52 @@ export default function ScheduleBuilderScreen() {
     setConfirmDelete(null);
   };
 
-  const openEdit = (kind, item) => {
+  const openEdit = (item) => {
     closeAllSheets();
     setEditForm({
-      coachId: String(kind === "group" ? item.coachId : item.trainerId),
-      discipline: item.serviceType || "pilates",
+      format: item.format || "1:4",
+      discipline: item.serviceType || "",
+      coachId: String(item.coachId),
+      name: item.name || "", // her-36: điền sẵn tên hiện tại để sửa
       when: fmtWhen(item.startAt),
-      capacity: String(item.capacity ?? (kind === "pt" ? "1" : "8")),
     });
     setEditError("");
-    setEditTarget({ kind, item });
+    setEditTarget(item);
   };
 
   const saveEdit = async () => {
     if (busy || !editTarget) return;
-    const { kind, item } = editTarget;
-    const isGroup = kind === "group";
-    const locked = isGroup ? item.customerNames.length > 0 : item.bookedCount > 0;
+    const item = editTarget;
+    const locked = bookedOf(item) > 0; // her-40: khớp luật server (bookedCount > 0)
     if (!editForm.coachId) return setEditError("Chọn HLV phụ trách");
 
-    // Số người tối đa của khung PT (mục 6): validate chung cho cả 2 nhánh dưới
-    const ptCap = Number(editForm.capacity);
-    if (!isGroup && (!Number.isInteger(ptCap) || ptCap < 1 || ptCap > 10)) {
-      return setEditError("Số người tối đa phải là số nguyên từ 1 đến 10");
-    }
     let body;
     if (locked) {
-      // Khung đã có khách: CHỈ đổi HLV (quyết định 16/08) — riêng khung PT quầy còn được
-      // nới SỐ NGƯỜI (không giảm dưới số khách đã đặt — server chặn atomic)
-      body = isGroup ? { coachId: editForm.coachId } : { trainerId: editForm.coachId, capacity: ptCap };
+      // Lớp đã có khách: CHỈ đổi HLV (quyết định 16/08) — giờ/bộ môn/loại hình server chặn
+      body = { coachId: editForm.coachId };
     } else {
+      if (!editForm.discipline) return setEditError("Chọn bộ môn");
       if (!editForm.when) return setEditError("Chưa chọn ngày giờ — bấm ô \"Chọn ngày giờ\"");
       const parsed = parseQuickDateTime(editForm.when);
       if (parsed.error) return setEditError(parsed.error);
-      // Giữ nguyên thời lượng cũ của khung khi dời giờ
+      // Giữ nguyên thời lượng cũ của buổi khi dời giờ
       const duration = new Date(item.endAt) - new Date(item.startAt);
       const startAt = parsed.date.toISOString();
       const endAt = new Date(parsed.date.getTime() + duration).toISOString();
-      if (isGroup) {
-        const cap = Number(editForm.capacity);
-        if (!Number.isInteger(cap) || cap < 1 || cap > 100) {
-          return setEditError("Sức chứa phải là số nguyên từ 1 đến 100");
-        }
-        body = { coachId: editForm.coachId, startAt, endAt, capacity: cap };
-        // Chỉ gửi bộ môn + tên tự sinh khi bộ môn THAY ĐỔI — lớp cũ tên riêng ("Pilates
-        // Reformer") dời giờ không bị âm thầm đổi tên (review her-09 #6)
-        if (editForm.discipline !== item.serviceType) {
-          body.serviceType = editForm.discipline;
-          body.name = disciplines.find(([k]) => k === editForm.discipline)?.[1] || editForm.discipline;
-        }
-      } else {
-        body = { trainerId: editForm.coachId, startAt, endAt, capacity: ptCap };
-      }
+      body = { coachId: editForm.coachId, startAt, endAt };
+      if (editForm.format !== item.format) body.format = editForm.format;
+      if (editForm.discipline !== item.serviceType) body.serviceType = editForm.discipline;
+      // her-36: chỉ gửi tên khi NGƯỜI DÙNG thật sự đổi ô tên — dời giờ lớp có tên riêng
+      // không bị âm thầm đổi tên (review her-09 #6). Xoá trống ô tên = gửi chuỗi rỗng,
+      // server đặt lại theo nhãn bộ môn.
+      const typedName = (editForm.name || "").trim();
+      if (typedName !== (item.name || "")) body.name = typedName;
     }
     setEditError("");
     setBusy(true);
     try {
-      await api.patch(isGroup ? `/schedule/classes/${item.id}` : `/schedule/pt-slots/${item.id}`, body);
-      flash("Đã cập nhật khung giờ");
+      await api.patch(`/schedule/classes/${item.id}`, body);
+      flash("Đã cập nhật buổi tập");
       setEditTarget(null);
       load();
     } catch (err) {
@@ -372,8 +379,16 @@ export default function ScheduleBuilderScreen() {
     }
   };
 
-  // Kiểm tra chung cho cả 2 loại khung giờ: HLV + ngày giờ (không nhận ngày quá khứ)
+  // Kiểm tra form tạo buổi: loại hình + bộ môn + HLV + ngày giờ (không nhận ngày quá khứ)
   const validateForm = () => {
+    if (!form.format) {
+      setSheetError("Chọn loại hình trước");
+      return null;
+    }
+    if (!form.discipline) {
+      setSheetError("Chọn bộ môn trước");
+      return null;
+    }
     if (!form.coachId) {
       setSheetError("Chọn HLV phụ trách trước");
       return null;
@@ -382,23 +397,12 @@ export default function ScheduleBuilderScreen() {
       setSheetError("Chưa chọn ngày giờ — bấm ô \"Chọn ngày giờ\" để chọn trên lịch");
       return null;
     }
-    const parsed = parseQuickDateTime(form.when);
+    // her-39: quầy được chọn ngày QUÁ KHỨ (dựng lại buổi khách đã tập) — server cũng chỉ
+    // mở đường này cho lễ tân/admin
+    const parsed = parseQuickDateTime(form.when, new Date(), { allowPast: true });
     if (parsed.error) {
       setSheetError(parsed.error);
       return null;
-    }
-    if (form.kind === "group") {
-      const cap = Number(form.capacity);
-      if (!Number.isInteger(cap) || cap < 1 || cap > 100) {
-        setSheetError("Sức chứa phải là số nguyên từ 1 đến 100");
-        return null;
-      }
-    } else {
-      const cap = Number(form.ptCapacity);
-      if (!Number.isInteger(cap) || cap < 1 || cap > 10) {
-        setSheetError("Số người tối đa phải là số nguyên từ 1 đến 10");
-        return null;
-      }
     }
     setSheetError("");
     return {
@@ -414,41 +418,25 @@ export default function ScheduleBuilderScreen() {
     setBusy(true);
     try {
       const label = disciplines.find(([k]) => k === form.discipline)?.[1] || form.discipline;
-      await api.post("/schedule/classes", {
-        // Tên lớp tự sinh theo loại hình (bỏ nhập tay — quyết định 14/08/2026);
-        // danh sách hiển thị "Tên lớp · HLV" nên không lặp tên HLV vào đây
-        name: label,
+      // her-36: tên riêng là tuỳ chọn — bỏ trống thì KHÔNG gửi, server lấy nhãn bộ môn
+      const typedName = form.name.trim();
+      const created = await api.post("/schedule/classes", {
+        ...(typedName ? { name: typedName } : {}),
+        format: form.format, // sức chứa do server gán theo loại hình (her-35)
         serviceType: form.discipline,
         coachId: form.coachId,
         ...range,
-        capacity: Number(form.capacity),
       });
-      // Ghi rõ ngày — khung xa hơn cửa sổ đang xem chưa hiện ngay, kẻo tưởng tạo hụt (her-28)
-      flash(`Đã tạo khung giờ Group ${form.when}`);
-      setForm((f) => ({ ...f, when: "" }));
+      // Ghi rõ ngày — buổi xa hơn cửa sổ đang xem chưa hiện ngay, kẻo tưởng tạo hụt (her-28)
+      flash(`Đã tạo buổi ${typedName || label} · ${form.format} ${form.when}`);
+      setForm((f) => ({ ...f, when: "", name: "" }));
       setSheetOpen(false);
-      load();
-    } catch (err) {
-      setSheetError(err.message); // hiện trong sheet — không để lỗi chìm sau Modal
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const createSlot = async () => {
-    if (busy) return;
-    const range = validateForm();
-    if (!range) return;
-    setBusy(true);
-    try {
-      await api.post("/schedule/pt-slots", {
-        trainerId: form.coachId,
-        ...range,
-        capacity: Number(form.ptCapacity),
-      });
-      flash(`${Number(form.ptCapacity) > 1 ? "Đã tạo khung PT nhóm" : "Đã tạo khung PT 1:1"} ${form.when}`);
-      setForm((f) => ({ ...f, when: "" }));
-      setSheetOpen(false);
+      // her-39: buổi trong QUÁ KHỨ = buổi khách đã tập xong -> mở luôn danh sách khách để
+      // add người đã tập, khỏi phải đi tìm lại buổi vừa tạo
+      const createdId = created?.class?._id || created?.class?.id;
+      if (createdId && new Date(range.startAt) < new Date()) {
+        setRoster({ classId: String(createdId) });
+      }
       load();
     } catch (err) {
       setSheetError(err.message); // hiện trong sheet — không để lỗi chìm sau Modal
@@ -470,74 +458,92 @@ export default function ScheduleBuilderScreen() {
     }
   };
 
-  const removeSlot = async (id) => {
-    if (busy) return;
-    setBusy(true);
-    try {
-      await api.delete(`/schedule/pt-slots/${id}`);
-      load();
-    } catch (err) {
-      flash(err.message, true);
-    } finally {
-      setBusy(false);
-    }
+  // her-19/her-35: HLV lọc theo chuyên môn, bộ môn lọc theo loại hình — utils/formats.js
+  const coaches = (disciplineKey) => coachesFor(trainers, disciplineKey);
+  const disciplineChips = (format) => disciplinesFor(disciplines, format);
+  const labelFor = (key) => disciplines.find(([k]) => k === key)?.[1] || key;
+  // her-36: ô tên đang để nguyên nhãn bộ môn CŨ (tức tên tự sinh) thì đổi theo bộ môn mới;
+  // tên riêng do người dùng gõ thì giữ nguyên
+  const nameForDiscipline = (currentName, oldKey, newKey) =>
+    (currentName || "").trim() === labelFor(oldKey) ? labelFor(newKey) : currentName;
+  // Chọn 1:8 thì tự sang Yoga — nhưng chỉ khi danh mục THẬT SỰ có Yoga (khớp fallback của load)
+  const disciplineForFormat = (format, current) => {
+    if (format !== "1:8") return current;
+    return disciplines.some(([k]) => k === FORMAT_18_SERVICE) ? FORMAT_18_SERVICE : "";
   };
 
-  // her-19: tạo lớp GROUP thì chỉ hiện HLV có chuyên môn của bộ môn đang chọn
-  const coachesFor = (disciplineKey) =>
-    trainers.filter((t) => !(t.specialties || []).length || t.specialties.includes(disciplineKey));
-
-  // ---- her-21: dựng danh sách BUỔI trộn lớp + PT theo ngày ----
+  // ---- her-21: dựng danh sách BUỔI theo ngày ----
 
   // Đếm điểm danh theo buổi từ bookings đã tải (range theo tab)
+  // her-40 (20/08): "đến" CHỈ tính booking có dấu điểm danh thật (attendanceAt). Buổi qua giờ
+  // được hệ thống tự chuyển "đã tập" (sweep) mang status completed nhưng chưa ai điểm danh →
+  // đếm vào "chưa điểm danh" để quầy biết còn phải điểm danh bù (không tính hoa hồng — her-10).
+  const countBooking = (s, b) => {
+    s.count += 1;
+    if (b.status === "completed") {
+      if (b.attendanceAt) s.done += 1;
+      else s.pending += 1;
+    }
+    if (b.status === "no_show") s.absent += 1; // "vắng" luôn do người bấm
+  };
   const summaryOf = {};
   for (const b of bookings) {
-    const key = b.type === "group" ? `c-${b.classId}` : `s-${b.slotId}`;
-    if (!summaryOf[key]) summaryOf[key] = { count: 0, done: 0, absent: 0 };
-    summaryOf[key].count += 1;
-    if (b.status === "completed") summaryOf[key].done += 1;
-    if (b.status === "no_show") summaryOf[key].absent += 1;
+    const key = `c-${b.classId}`;
+    if (!summaryOf[key]) summaryOf[key] = { count: 0, done: 0, absent: 0, pending: 0 };
+    countBooking(summaryOf[key], b);
   }
 
   let rows = [];
   {
     if (tab === "past") {
       // Lịch sử: dựng từ bookings (server sort mới nhất trước); buổi còn nằm trong cửa sổ
-      // tải của classes/slots (00:00 hôm nay → +366 ngày) thì join lại item để vẫn Sửa/Xoá
+      // tải của classes (00:00 hôm nay → +366 ngày) thì join lại item để vẫn Sửa/Xoá
       // — buổi trước hôm nay không join được, chỉ còn "Danh sách khách" (đúng chủ đích)
       const classById = Object.fromEntries(classes.map((x) => [String(x.id), x]));
-      const slotById = Object.fromEntries(ptSlots.map((s) => [String(s.id), s]));
       // Đếm count/done/absent NGAY TRONG vòng gộp — join qua summaryOf sẽ dồn mọi booking
-      // cũ thiếu classId/slotId vào chung 1 bucket "null", số khách sai (review her-21 V1);
+      // cũ thiếu classId vào chung 1 bucket "null", số khách sai (review her-21 V1);
       // booking cũ thiếu id thì gộp theo tên+giờ để không vỡ thành nhiều dòng (N7)
       const rowByKey = {};
       for (const b of bookings) {
-        const key = b.type === "group"
-          ? `c-${b.classId || `${b.title}|${b.startAt}`}`
-          : `s-${b.slotId || `${b.title}|${b.startAt}`}`;
+        const key = `c-${b.classId || `${b.title}|${b.startAt}`}`;
         if (!rowByKey[key]) {
-          const item = b.type === "group" ? classById[String(b.classId)] : slotById[String(b.slotId)];
+          const item = classById[String(b.classId)];
           rowByKey[key] = {
             id: key,
-            kind: b.type === "group" ? "group" : "pt",
-            classId: b.type === "group" ? b.classId : null,
-            slotId: b.type === "pt" ? b.slotId : null,
-            title: b.type === "group" ? `${b.title} · ${b.coach}` : b.title,
+            classId: b.classId || null,
+            title: classTitle({ name: b.title, format: b.format, coach: b.coach }),
             startAt: b.startAt,
             item: item || null,
             hasCustomers: true,
+            ended: true, // tab Lịch sử: mọi buổi đã kết thúc (her-40: để hiện "chưa điểm danh")
             coach: b.coach,
             serviceType: b.serviceType, // her-22: server trả kèm để lọc theo bộ môn
-            sum: { count: 0, done: 0, absent: 0 },
+            sum: { count: 0, done: 0, absent: 0, pending: 0 },
           };
           rows.push(rowByKey[key]);
         }
-        rowByKey[key].sum.count += 1;
-        if (b.status === "completed") rowByKey[key].sum.done += 1;
-        if (b.status === "no_show") rowByKey[key].sum.absent += 1;
+        countBooking(rowByKey[key].sum, b);
       }
+      // her-39: buổi ĐÃ QUA nhưng CHƯA CÓ KHÁCH (quầy vừa dựng lại buổi đã tập) — bookings
+      // không có dòng nào nên phải lấy từ danh sách lớp. Không gắn `item` (lớp đã kết thúc
+      // không sửa được), chỉ để mở "Danh sách khách" mà add học viên vào.
+      const nowMs = Date.now();
+      for (const x of pastClasses) {
+        if (rowByKey[`c-${x.id}`]) continue;
+        if (new Date(x.endAt).getTime() >= nowMs) continue; // buổi đang diễn ra thuộc "Hôm nay"
+        // Chỉ lấy buổi THẬT SỰ 0 khách. Dùng chỗ đã đặt chứ không dùng customerNames:
+        // customerNames chỉ gồm khách còn "booked", buổi cũ đã điểm danh xong sẽ rỗng —
+        // lấy nhầm sẽ hiện "chưa có khách đặt" cho buổi vốn có người tập
+        if (x.spotsLeft < x.capacity) continue;
+        rows.push({
+          id: `c-${x.id}`, classId: x.id,
+          title: classTitle(x), startAt: x.startAt, item: null,
+          hasCustomers: false, coach: x.coach, serviceType: x.serviceType,
+        });
+      }
+      rows.sort((a, b) => new Date(b.startAt) - new Date(a.startAt)); // lịch sử: mới nhất trước
     } else {
-      // Hôm nay / Sắp tới: cấu trúc từ classes + slots — KHUNG TRỐNG vẫn hiện để sửa/xoá
+      // Hôm nay / Sắp tới: dựng từ classes — buổi TRỐNG vẫn hiện để sửa/xoá
       const now = new Date();
       const endOfToday = new Date(); endOfToday.setHours(23, 59, 59, 999);
       const inRange = (d) => {
@@ -547,23 +553,15 @@ export default function ScheduleBuilderScreen() {
       for (const x of classes) {
         if (!inRange(x.startAt)) continue;
         rows.push({
-          id: `c-${x.id}`, kind: "group", classId: x.id, slotId: null,
-          title: `${x.name} · ${x.coach}`, startAt: x.startAt, item: x,
+          id: `c-${x.id}`, classId: x.id,
+          title: classTitle(x), startAt: x.startAt, item: x,
           coach: x.coach, serviceType: x.serviceType,
-          hasCustomers: x.customerNames.length > 0,
-          booked: Math.max(x.capacity - x.spotsLeft, 0), capacity: x.capacity,
+          hasCustomers: bookedOf(x) > 0, // her-40: theo chỗ đã giữ, không theo customerNames
+          booked: bookedOf(x), capacity: x.capacity,
+          // her-40: buổi ĐÃ KẾT THÚC thì server chặn mọi sửa ("lịch sử giữ nguyên") —
+          // ẩn nút Sửa thay vì để bấm vào rồi báo lỗi
+          ended: new Date(x.endAt) < new Date(),
           sum: summaryOf[`c-${x.id}`],
-        });
-      }
-      for (const s of ptSlots) {
-        if (!inRange(s.startAt)) continue;
-        rows.push({
-          id: `s-${s.id}`, kind: "pt", classId: null, slotId: s.id,
-          title: `${s.capacity > 1 ? "PT nhóm" : "PT 1:1"} — ${s.trainer}`, startAt: s.startAt, item: s,
-          coach: s.trainer, serviceType: "pt",
-          hasCustomers: s.bookedCount > 0,
-          booked: s.bookedCount, capacity: s.capacity,
-          sum: summaryOf[`s-${s.id}`],
         });
       }
       rows.sort((a, b) => new Date(a.startAt) - new Date(b.startAt));
@@ -587,13 +585,16 @@ export default function ScheduleBuilderScreen() {
     });
   }
 
+  // her-38: dòng đậm đã có "Tên · loại hình · HLV" → dòng phụ CHỈ còn tình trạng khách
   const metaOf = (r) => {
-    if (!r.hasCustomers) return "chưa có khách đặt";
     const parts = [];
+    if (!r.hasCustomers) return "chưa có khách đặt";
     if (r.capacity != null) parts.push(`${r.booked}/${r.capacity} khách`);
     else if (r.sum) parts.push(`${r.sum.count} khách`);
     if (r.sum?.done) parts.push(`${r.sum.done} đến`);
     if (r.sum?.absent) parts.push(`${r.sum.absent} vắng`);
+    // her-40: buổi ĐÃ KẾT THÚC còn khách chưa điểm danh — nhắc quầy điểm danh bù
+    if (r.ended && r.sum?.pending) parts.push(`${r.sum.pending} chưa điểm danh`);
     return parts.join(" · ");
   };
 
@@ -666,7 +667,7 @@ export default function ScheduleBuilderScreen() {
           <View key={sec.key}>
             <SectionLabel>{sec.label}</SectionLabel>
 
-            {/* Danh sách BUỔI: lớp + PT chung, đủ thao tác trên dòng */}
+            {/* Danh sách BUỔI: đủ thao tác trên dòng */}
             {sec.items.map((r, i) => (
                 <TimeRow
                   key={r.id}
@@ -676,24 +677,26 @@ export default function ScheduleBuilderScreen() {
                   last={i === sec.items.length - 1}
                 >
                   <View style={styles.actionRow}>
-                    {r.hasCustomers && (r.classId || r.slotId) && (
+                    {/* her-39: hiện cả khi buổi chưa có khách — đây là đường quầy ĐẶT HỘ
+                        (thêm học viên vào buổi) */}
+                    {!!r.classId && (
                       <TouchableOpacity
-                        onPress={() => { closeAllSheets(); setRoster(r.classId ? { classId: r.classId } : { slotId: r.slotId }); }}
+                        onPress={() => { closeAllSheets(); setRoster({ classId: r.classId }); }}
                         hitSlop={8}
                       >
                         <Text style={[styles.deleteLink, { color: c.primary }]}>Danh sách khách</Text>
                       </TouchableOpacity>
                     )}
                     {/* item = còn trong cửa sổ tải (buổi trước hôm nay chỉ xem danh sách) */}
-                    {!!r.item && (
-                      <TouchableOpacity disabled={busy} onPress={() => openEdit(r.kind, r.item)} hitSlop={8}>
+                    {!!r.item && !r.ended && (
+                      <TouchableOpacity disabled={busy} onPress={() => openEdit(r.item)} hitSlop={8}>
                         <Text style={[styles.deleteLink, { color: c.primary }]}>Sửa</Text>
                       </TouchableOpacity>
                     )}
-                    {/* Chỉ khung chưa có khách mới xoá được (atomic ở server — C7) */}
+                    {/* Chỉ buổi chưa có khách mới xoá được (atomic ở server — C7) */}
                     {!!r.item && !r.hasCustomers && (
-                      <TouchableOpacity disabled={busy} onPress={() => { closeAllSheets(); setConfirmDelete({ kind: r.kind, item: r.item }); }} hitSlop={8}>
-                        <Text style={[styles.deleteLink, { color: c.inkSoft }]}>Xoá khung giờ</Text>
+                      <TouchableOpacity disabled={busy} onPress={() => { closeAllSheets(); setConfirmDelete(r.item); }} hitSlop={8}>
+                        <Text style={[styles.deleteLink, { color: c.inkSoft }]}>Xoá buổi</Text>
                       </TouchableOpacity>
                     )}
                   </View>
@@ -716,65 +719,78 @@ export default function ScheduleBuilderScreen() {
           setSheetOpen(true);
         }}
       >
-        <Text style={[styles.fabText, { color: c.primary }]}>+ Khung giờ mới</Text>
+        <Feather name="plus" size={24} color={c.primary} />
       </TouchableOpacity>
 
       <FormSheet
         visible={sheetOpen}
-        title="Khung giờ mới"
+        title="Buổi tập mới"
         // Đang tạo thì không cho đóng — đóng giữa chừng là lỗi server hiện vào sheet
         // đã tắt, người dùng tưởng tạo thành công (review her-21 V2)
         onClose={() => { if (!busy) setSheetOpen(false); }}
       >
-        {/* her-21: không còn tab con Lớp/PT — chọn LOẠI KHUNG ngay trong form */}
-        <SectionLabel style={styles.sheetLabel}>Loại khung</SectionLabel>
+        {/* her-35: loại hình → bộ môn → HLV → ngày giờ (chốt 19/08) */}
+        <SectionLabel style={styles.sheetLabel}>Loại hình</SectionLabel>
         <View style={styles.chipWrap}>
-          {[["group", "Lớp Group"], ["pt", "Khung PT"]].map(([key, label]) => (
+          {FORMATS.map((key) => (
             <TouchableOpacity
               key={key}
-              onPress={() => setForm((f) => ({ ...f, kind: key }))}
+              onPress={() => setForm((f) => {
+                // 1:8 chỉ Yoga — chọn luôn giúp; HLV đang chọn còn hợp bộ môn thì GIỮ
+                const discipline = disciplineForFormat(key, f.discipline);
+                const stillOk = coaches(discipline).some((t) => t.id === f.coachId);
+                return { ...f, format: key, discipline, coachId: stillOk ? f.coachId : "" };
+              })}
               style={[
                 styles.chip,
                 { borderColor: c.line },
-                form.kind === key && { backgroundColor: c.primaryTint, borderColor: c.primaryTint },
+                form.format === key && { backgroundColor: c.primaryTint, borderColor: c.primaryTint },
               ]}
             >
-              <Text style={[styles.chipText, { color: form.kind === key ? c.primary : c.ink }]}>{label}</Text>
+              <Text style={[styles.chipText, { color: form.format === key ? c.primary : c.ink }]}>{key}</Text>
             </TouchableOpacity>
           ))}
         </View>
 
-        {/* her-19: chọn BỘ MÔN TRƯỚC (lớp group) — danh sách HLV bên dưới lọc theo chuyên môn */}
-        {form.kind === "group" && (
-          <>
-            <SectionLabel style={styles.sheetLabel}>Bộ môn</SectionLabel>
-            <View style={styles.chipWrap}>
-              {disciplines.map(([key, label]) => (
-                <TouchableOpacity
-                  key={key}
-                  onPress={() => setForm((f) => {
-                    // Đổi bộ môn: HLV đang chọn không thuộc môn mới thì bỏ chọn
-                    const stillOk = coachesFor(key).some((t) => t.id === f.coachId);
-                    return { ...f, discipline: key, coachId: stillOk ? f.coachId : "" };
-                  })}
-                  style={[
-                    styles.chip,
-                    { borderColor: c.line },
-                    form.discipline === key && { backgroundColor: c.primaryTint, borderColor: c.primaryTint },
-                  ]}
-                >
-                  <Text style={[styles.chipText, { color: form.discipline === key ? c.primary : c.ink }]}>{label}</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-          </>
-        )}
-
-        <SectionLabel style={styles.sheetLabel}>
-          {form.kind === "group" ? "HLV (có chuyên môn bộ môn này)" : "HLV"}
-        </SectionLabel>
+        {/* her-19: chọn BỘ MÔN TRƯỚC — danh sách HLV bên dưới lọc theo chuyên môn */}
+        <SectionLabel style={styles.sheetLabel}>Bộ môn</SectionLabel>
         <View style={styles.chipWrap}>
-          {(form.kind === "group" ? coachesFor(form.discipline) : trainers).map((t) => (
+          {disciplineChips(form.format).map(([key, label]) => (
+            <TouchableOpacity
+              key={key}
+              onPress={() => setForm((f) => {
+                // Đổi bộ môn: HLV đang chọn không thuộc môn mới thì bỏ chọn
+                const stillOk = coaches(key).some((t) => t.id === f.coachId);
+                return { ...f, discipline: key, coachId: stillOk ? f.coachId : "" };
+              })}
+              style={[
+                styles.chip,
+                { borderColor: c.line },
+                form.discipline === key && { backgroundColor: c.primaryTint, borderColor: c.primaryTint },
+              ]}
+            >
+              <Text style={[styles.chipText, { color: form.discipline === key ? c.primary : c.ink }]}>{label}</Text>
+            </TouchableOpacity>
+          ))}
+          {disciplineChips(form.format).length === 0 && (
+            <Text style={{ fontSize: 12, color: c.inkSoft }}>Chưa có bộ môn — kiểm tra kết nối</Text>
+          )}
+        </View>
+
+        {/* her-36: mỗi buổi có thể mang tên riêng — bỏ trống thì server lấy tên bộ môn */}
+        <SectionLabel style={styles.sheetLabel}>Tên lớp</SectionLabel>
+        <TextInput
+          value={form.name}
+          onChangeText={(v) => setForm((f) => ({ ...f, name: v }))}
+          placeholder="Bỏ trống = tên bộ môn"
+          placeholderTextColor={c.inkSoft}
+          maxLength={100}
+          style={[styles.input, { borderBottomColor: c.line, color: c.ink }]}
+        />
+
+        <SectionLabel style={styles.sheetLabel}>HLV (có chuyên môn bộ môn này)</SectionLabel>
+        <View style={styles.chipWrap}>
+          {coaches(form.discipline).map((t) => (
             <TouchableOpacity
               key={t.id}
               onPress={() => setForm((f) => ({ ...f, coachId: t.id }))}
@@ -787,67 +803,77 @@ export default function ScheduleBuilderScreen() {
               <Text style={[styles.chipText, { color: form.coachId === t.id ? c.primaryOn : c.ink }]}>{t.name}</Text>
             </TouchableOpacity>
           ))}
-          {form.kind === "group" && coachesFor(form.discipline).length === 0 && (
+          {coaches(form.discipline).length === 0 && (
             <Text style={{ fontSize: 12, color: c.inkSoft }}>Chưa có HLV nào có chuyên môn này</Text>
           )}
         </View>
 
         <SectionLabel style={styles.sheetLabel}>Ngày giờ</SectionLabel>
-        {/* Mục 11: bộ chọn lịch + giờ thay ô gõ tay — cần đủ bề ngang nên đứng riêng 1 hàng */}
-        <DateTimeField value={form.when} onChange={(v) => setForm((f) => ({ ...f, when: v }))} />
-        <View style={{ width: 150 }}>
-          {form.kind === "group" ? (
-            <>
-              <SectionLabel style={styles.sheetLabel}>Sức chứa</SectionLabel>
-              <TextInput
-                value={form.capacity}
-                onChangeText={(v) => setForm((f) => ({ ...f, capacity: v }))}
-                keyboardType="number-pad"
-                style={[styles.input, { borderBottomColor: c.line, color: c.ink }]}
-              />
-            </>
-          ) : (
-            <>
-              {/* PT nhóm (mục 6): 1 = PT 1:1; tối đa 10 */}
-              <SectionLabel style={styles.sheetLabel}>Số người tối đa</SectionLabel>
-              <TextInput
-                value={form.ptCapacity}
-                onChangeText={(v) => setForm((f) => ({ ...f, ptCapacity: v }))}
-                keyboardType="number-pad"
-                style={[styles.input, { borderBottomColor: c.line, color: c.ink }]}
-              />
-            </>
-          )}
-        </View>
+        {/* Mục 11: bộ chọn lịch + giờ thay ô gõ tay — cần đủ bề ngang nên đứng riêng 1 hàng.
+            her-39: quầy chọn được cả ngày ĐÃ QUA (dựng lại buổi khách đã tập) */}
+        <DateTimeField allowPast value={form.when} onChange={(v) => setForm((f) => ({ ...f, when: v }))} />
 
         {!!sheetError && <Text style={[styles.sheetError, { color: c.danger }]}>{sheetError}</Text>}
-        <AppButton style={{ marginTop: 22 }} disabled={busy} onPress={form.kind === "group" ? createClass : createSlot}>
-          {busy ? "Đang tạo..." : "Tạo khung giờ"}
+        <AppButton style={{ marginTop: 22 }} disabled={busy} onPress={createClass}>
+          {busy ? "Đang tạo..." : "Tạo buổi tập"}
         </AppButton>
       </FormSheet>
 
       <FormSheet
         visible={!!editTarget}
-        title={editTarget?.kind === "pt" ? "Sửa khung PT" : "Sửa khung giờ Group"}
+        title="Sửa buổi tập"
         onClose={() => { if (!busy) setEditTarget(null); }}
       >
         {!!editTarget && (() => {
-          const isGroup = editTarget.kind === "group";
-          const locked = isGroup ? editTarget.item.customerNames.length > 0 : editTarget.item.bookedCount > 0;
+          const locked = bookedOf(editTarget) > 0; // her-40: khớp luật server (bookedCount > 0)
           return (
             <View>
-              {/* her-20: Bộ môn TRƯỚC rồi mới HLV — khớp form tạo (góp ý 16/08); khung đã
-                  có khách không đổi bộ môn được nên không hiện khối này */}
-              {isGroup && !locked && (
+              {/* her-35: cùng thứ tự form tạo — loại hình → bộ môn → HLV → ngày giờ.
+                  Lớp đã có khách chỉ đổi được HLV nên 3 khối kia ẩn đi (server chặn) */}
+              {!locked && (
                 <>
-                  <SectionLabel style={styles.sheetLabel}>Bộ môn</SectionLabel>
+                  <SectionLabel style={styles.sheetLabel}>Loại hình</SectionLabel>
                   <View style={styles.chipWrap}>
-                    {disciplines.map(([key, label]) => (
+                    {FORMATS.map((key) => (
                       <TouchableOpacity
                         key={key}
                         onPress={() => setEditForm((f) => {
-                          const stillOk = coachesFor(key).some((t) => String(t.id) === f.coachId);
-                          return { ...f, discipline: key, coachId: stillOk ? f.coachId : "" };
+                          const discipline = disciplineForFormat(key, f.discipline);
+                          const stillOk = coaches(discipline).some((t) => String(t.id) === f.coachId);
+                          return {
+                            ...f,
+                            format: key,
+                            discipline,
+                            name: nameForDiscipline(f.name, f.discipline, discipline),
+                            coachId: stillOk ? f.coachId : "",
+                          };
+                        })}
+                        style={[
+                          styles.chip,
+                          { borderColor: c.line },
+                          editForm.format === key && { backgroundColor: c.primaryTint, borderColor: c.primaryTint },
+                        ]}
+                      >
+                        <Text style={[styles.chipText, { color: editForm.format === key ? c.primary : c.ink }]}>
+                          {key}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+
+                  <SectionLabel style={styles.sheetLabel}>Bộ môn</SectionLabel>
+                  <View style={styles.chipWrap}>
+                    {disciplineChips(editForm.format).map(([key, label]) => (
+                      <TouchableOpacity
+                        key={key}
+                        onPress={() => setEditForm((f) => {
+                          const stillOk = coaches(key).some((t) => String(t.id) === f.coachId);
+                          return {
+                            ...f,
+                            discipline: key,
+                            name: nameForDiscipline(f.name, f.discipline, key),
+                            coachId: stillOk ? f.coachId : "",
+                          };
                         })}
                         style={[
                           styles.chip,
@@ -861,18 +887,26 @@ export default function ScheduleBuilderScreen() {
                       </TouchableOpacity>
                     ))}
                   </View>
+
+                  {/* her-36: đổi tên buổi — chỉ khi lớp chưa có khách (server chặn, L7) */}
+                  <SectionLabel style={styles.sheetLabel}>Tên lớp</SectionLabel>
+                  <TextInput
+                    value={editForm.name}
+                    onChangeText={(v) => setEditForm((f) => ({ ...f, name: v }))}
+                    placeholder="Bỏ trống = tên bộ môn"
+                    placeholderTextColor={c.inkSoft}
+                    maxLength={100}
+                    style={[styles.input, { borderBottomColor: c.line, color: c.ink }]}
+                  />
                 </>
               )}
               <SectionLabel style={styles.sheetLabel}>
-                {isGroup && !locked ? "HLV (có chuyên môn bộ môn này)" : "HLV phụ trách"}
+                {locked ? "HLV phụ trách" : "HLV (có chuyên môn bộ môn này)"}
               </SectionLabel>
               <View style={styles.chipWrap}>
                 {/* Lớp cũ chưa có bộ môn (serviceType rỗng) mà ĐÃ có khách: không lọc HLV
                     theo bộ môn đoán mò — hiện đủ để còn thấy/đổi đúng người (review N4) */}
-                {(isGroup
-                  ? (locked && !editTarget.item.serviceType ? trainers : coachesFor(editForm.discipline))
-                  : trainers
-                ).map((t) => (
+                {(locked && !editTarget.serviceType ? trainers : coaches(editForm.discipline)).map((t) => (
                   <TouchableOpacity
                     key={t.id}
                     onPress={() => setEditForm((f) => ({ ...f, coachId: String(t.id) }))}
@@ -890,37 +924,14 @@ export default function ScheduleBuilderScreen() {
               </View>
 
               {locked ? (
-                <>
-                  <Text style={[styles.lockNote, { color: c.inkSoft }]}>
-                    {isGroup
-                      ? "Khung này đã có khách đặt — chỉ đổi được HLV (quyết định 16/08). Muốn đổi giờ hãy hủy lịch cho khách (khách được hoàn buổi) rồi sửa."
-                      : "Khung này đã có khách đặt — chỉ đổi được HLV hoặc NỚI số người tối đa. Muốn đổi giờ hãy hủy lịch cho khách (khách được hoàn buổi) rồi sửa."}
-                  </Text>
-                  {!isGroup && (
-                    <View style={{ width: 140 }}>
-                      <SectionLabel style={styles.sheetLabel}>Số người tối đa</SectionLabel>
-                      <TextInput
-                        value={editForm.capacity}
-                        onChangeText={(v) => setEditForm((f) => ({ ...f, capacity: v }))}
-                        keyboardType="number-pad"
-                        style={[styles.input, { borderBottomColor: c.line, color: c.ink }]}
-                      />
-                    </View>
-                  )}
-                </>
+                <Text style={[styles.lockNote, { color: c.inkSoft }]}>
+                  Lớp đã có khách — chỉ đổi được HLV. Muốn đổi giờ hãy hủy lịch cho khách
+                  (khách được hoàn buổi) rồi sửa.
+                </Text>
               ) : (
                 <>
                   <SectionLabel style={styles.sheetLabel}>Ngày giờ</SectionLabel>
                   <DateTimeField value={editForm.when} onChange={(v) => setEditForm((f) => ({ ...f, when: v }))} />
-                  <View style={{ width: 150 }}>
-                    <SectionLabel style={styles.sheetLabel}>{isGroup ? "Sức chứa" : "Số người tối đa"}</SectionLabel>
-                    <TextInput
-                      value={editForm.capacity}
-                      onChangeText={(v) => setEditForm((f) => ({ ...f, capacity: v }))}
-                      keyboardType="number-pad"
-                      style={[styles.input, { borderBottomColor: c.line, color: c.ink }]}
-                    />
-                  </View>
                 </>
               )}
               {!!editError && <Text style={[styles.sheetError, { color: c.danger }]}>{editError}</Text>}
@@ -935,17 +946,16 @@ export default function ScheduleBuilderScreen() {
       <ConfirmSheet
         visible={!!confirmDelete}
         busy={busy}
-        title="Xoá khung giờ?"
+        title="Xoá buổi tập?"
         message={
           confirmDelete
-            ? `Bạn chắc chắn muốn xoá khung ${fmtTime(confirmDelete.item.startAt)} ${dayLabel(confirmDelete.item.startAt)}? Thao tác không thể hoàn tác.`
+            ? `Bạn chắc chắn muốn xoá buổi ${fmtTime(confirmDelete.startAt)} ${dayLabel(confirmDelete.startAt)}? Thao tác không thể hoàn tác.`
             : ""
         }
-        confirmLabel="Xoá khung giờ"
+        confirmLabel="Xoá buổi"
         onConfirm={async () => {
           if (!confirmDelete) return;
-          if (confirmDelete.kind === "group") await removeClass(confirmDelete.item.id);
-          else await removeSlot(confirmDelete.item.id);
+          await removeClass(confirmDelete.id);
           setConfirmDelete(null);
         }}
         onClose={() => setConfirmDelete(null)}
@@ -954,9 +964,9 @@ export default function ScheduleBuilderScreen() {
       {/* her-20: quầy hủy được lịch khách ngay trong danh sách — hủy xong tải lại lịch */}
       <RosterSheet
         classId={roster?.classId}
-        slotId={roster?.slotId}
         canClear
         canCancel
+        canAdd
         onChanged={() => load()}
         onClose={() => setRoster(null)}
       />
@@ -992,27 +1002,29 @@ const styles = StyleSheet.create({
   deleteLink: { fontSize: 11.5, fontWeight: "700" },
   actionRow: { flexDirection: "row", gap: 16 },
   lockNote: { fontSize: 12, lineHeight: 18, marginTop: 12 },
+  // FAB chỉ icon "+" — tròn, nhích lên khỏi mép dưới (góp ý 18/08)
   fab: {
     position: "absolute",
     right: 22,
-    bottom: 20,
+    bottom: 34,
+    width: 54,
+    height: 54,
     borderRadius: 999,
-    paddingVertical: 13,
-    paddingHorizontal: 18,
+    alignItems: "center",
+    justifyContent: "center",
     shadowColor: "#000",
     shadowOpacity: 0.14,
     shadowRadius: 10,
     shadowOffset: { width: 0, height: 4 },
     elevation: 5,
   },
-  fabText: { fontSize: 13, fontWeight: "800" },
   sheetLabel: { marginTop: 12 },
+  // Ô nhập gạch chân — cùng kiểu với các form khác của app (her-36)
+  input: { borderBottomWidth: 1.5, paddingVertical: 8, fontSize: 15, marginTop: 2 },
   sheetError: { fontSize: 12.5, fontWeight: "700", marginTop: 14 },
   chipWrap: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 8 },
   chip: { paddingVertical: 8, paddingHorizontal: 14, borderRadius: 999, borderWidth: 1.5 },
   chipText: { fontSize: 12.5, fontWeight: "700" },
-  // Ô nhập kiểu gạch chân theo bản thiết kế
-  input: { borderBottomWidth: 1.5, paddingVertical: 8, fontSize: 15, marginTop: 2 },
   toast: {
     position: "absolute",
     bottom: 80,

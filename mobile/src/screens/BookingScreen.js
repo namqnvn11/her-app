@@ -1,12 +1,13 @@
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { View, Text, ScrollView, TouchableOpacity, StyleSheet, RefreshControl } from "react-native";
-import { useFocusEffect, useNavigation, useRoute } from "@react-navigation/native";
+import { useFocusEffect } from "@react-navigation/native";
 import { Feather } from "@expo/vector-icons";
 import TopBar from "../components/TopBar";
 import TimeRow from "../components/TimeRow";
 import AppButton from "../components/AppButton";
 import FormSheet from "../components/FormSheet";
 import { api } from "../api/client";
+import { classTitle } from "../utils/displayName";
 import { useTheme } from "../theme";
 
 function fmtTime(d) {
@@ -22,17 +23,19 @@ function fmtDayTime(d) {
   return `${dd}/${mm} ${fmtTime(date)}`;
 }
 
-// Dự đoán gói sẽ bị trừ — CHỈ để hiển thị màn xác nhận (mục 3). Bản sao luật Q4:
-// gói CÓ hạn còn phủ ngày tập, hạn gần trước; hết mới tới gói không hạn, kích hoạt trước
-// trước. Quyết định thật vẫn ở server (chargeSession) — lệch thì message server là chốt.
-function predictPackage(packages, serviceType, startAt) {
+// Dự đoán gói sẽ bị trừ — CHỈ để hiển thị màn xác nhận (mục 3). Bản sao luật chargeSession
+// (her-35): gói còn hiệu lực, CHỨA bộ môn của buổi và ĐÚNG loại hình; gói CÓ hạn còn phủ
+// ngày tập trừ trước (hạn gần trước), hết mới tới gói không hạn (kích hoạt trước trừ trước).
+// Quyết định thật vẫn ở server — lệch thì message server là chốt.
+function predictPackage(packages, cls) {
   const usable = packages.filter(
     (p) =>
       p.status === "active" &&
-      p.serviceType === serviceType &&
+      (p.serviceTypes || []).includes(cls.serviceType) &&
+      p.format === cls.format &&
       (p.remainingSessions == null || p.remainingSessions > 0)
   );
-  const start = new Date(startAt);
+  const start = new Date(cls.startAt);
   const dated = usable
     .filter((p) => p.expiresAt && new Date(p.expiresAt) >= start)
     .sort(
@@ -48,29 +51,20 @@ function predictPackage(packages, serviceType, startAt) {
   return noExp[0] || null;
 }
 
-// Mục 2 (bản gửi khách): tab theo BỘ MÔN, chỉ hiện tab khách đang có gói còn hiệu lực —
-// lớp không thuộc gói ẨN HẲN. Đây chỉ là lớp hiển thị; luật thật vẫn ở server (H7, C1).
-const GROUP_TABS = [
-  ["pilates", "Pilates"],
-  ["yoga", "Yoga"],
-  ["gym", "Gym"],
-];
-
 export default function BookingScreen() {
-  const route = useRoute();
-  const navigation = useNavigation();
   const { c } = useTheme();
-  // tab = serviceType ("pilates"/"yoga"/"gym") hoặc "pt"; null = chưa chọn -> tab đầu tiên
-  const [tab, setTab] = useState(null);
   const [dayIndex, setDayIndex] = useState(0);
   const [classes, setClasses] = useState([]);
-  const [trainers, setTrainers] = useState([]);
+  const [disciplines, setDisciplines] = useState([]);
   // null = đang tải danh sách gói; [] = không có gói còn hiệu lực
-  const [myTypes, setMyTypes] = useState(null);
-  const [myPackages, setMyPackages] = useState([]);
+  const [myPackages, setMyPackages] = useState(null);
   const [myBookedIds, setMyBookedIds] = useState([]);
   const [hasPausedOnly, setHasPausedOnly] = useState(false);
-  // Màn xác nhận trước khi chốt (mục 3): { kind: "group"|"pt", item } | null
+  // 3 filter (chốt 19/08): HLV · chỉ buổi còn chỗ · bộ môn. null = "Tất cả".
+  const [filterCoach, setFilterCoach] = useState(null);
+  const [filterDiscipline, setFilterDiscipline] = useState(null);
+  const [onlyAvailable, setOnlyAvailable] = useState(false);
+  // Màn xác nhận trước khi chốt (mục 3): lớp đang chọn | null
   const [confirm, setConfirm] = useState(null);
   const [confirmError, setConfirmError] = useState("");
   // Cờ đồng bộ chống bấm đúp (state busy render trễ 1 nhịp) + id đang xác nhận
@@ -86,20 +80,24 @@ export default function BookingScreen() {
     setLoading(true);
     try {
       setErrorMsg("");
-      const [classesRes, trainersRes, pkgRes, myBkRes] = await Promise.all([
+      // Danh mục bộ môn CHỈ dùng để lấy nhãn chip -> tách khỏi Promise.all: hỏng cũng không
+      // được làm hỏng cả màn đặt lịch, nhãn rơi về chính key bộ môn
+      api
+        .get("/disciplines")
+        .then((r) => setDisciplines(r.disciplines || []))
+        .catch(() => setDisciplines([]));
+      const [classesRes, pkgRes, myBkRes] = await Promise.all([
         api.get("/classes"),
-        api.get("/trainers"),
         api.get("/me/packages"),
         api.get("/me/bookings"),
       ]);
-      setClasses(classesRes.classes);
-      setTrainers(trainersRes.trainers);
-      // Lớp/slot mình ĐÃ đặt -> hiện nút "Đã đặt" ngay trên danh sách (góp ý 16/08)
-      setMyBookedIds(myBkRes.bookings.map((b) => String(b.classId || b.slotId)).filter(Boolean));
-      const active = pkgRes.packages.filter((p) => p.status === "active");
-      setMyPackages(pkgRes.packages);
-      setMyTypes([...new Set(active.map((p) => p.serviceType))]);
-      setHasPausedOnly(active.length === 0 && pkgRes.packages.some((p) => p.status === "paused"));
+      setClasses(classesRes.classes || []);
+      // Buổi mình ĐÃ đặt -> hiện nút "Đã đặt" ngay trên danh sách (góp ý 16/08)
+      setMyBookedIds((myBkRes.bookings || []).map((b) => String(b.classId)).filter(Boolean));
+      const all = pkgRes.packages || [];
+      setMyPackages(all);
+      const active = all.filter((p) => p.status === "active");
+      setHasPausedOnly(active.length === 0 && all.some((p) => p.status === "paused"));
     } catch (err) {
       setErrorMsg(err.message);
     } finally {
@@ -109,42 +107,35 @@ export default function BookingScreen() {
 
   useFocusEffect(
     useCallback(() => {
-      if (route.params?.initialTab === "pt") {
-        setTab("pt"); // khách không có gói PT thì activeTab tự rơi về tab đầu
-        navigation.setParams({ initialTab: undefined });
-      } else if (route.params?.initialTab === "group") {
-        setTab(null); // null -> tab bộ môn đầu tiên khách có
-        navigation.setParams({ initialTab: undefined });
-      }
       load();
-      // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [load, route.params?.initialTab])
+    }, [load])
   );
 
   // Clear timer cũ để toast lỗi không bị toast trước đó "giết non" giữa chừng
   const toastTimer = useRef(null);
+  // Rời màn khi toast còn treo -> dọn timer, tránh setState trên component đã gỡ
+  useEffect(() => () => clearTimeout(toastTimer.current), []);
   const flash = (msg, isError = false) => {
     clearTimeout(toastTimer.current);
     setToast({ msg, isError });
     toastTimer.current = setTimeout(() => setToast(null), isError ? 3500 : 2200);
   };
 
-  const book = async (payload, successMsg) => {
+  const book = async (cls) => {
     if (busyRef.current) return; // chặn bấm đúp — 1 lần đặt, trừ 1 buổi
     busyRef.current = true;
     setBusy(true);
-    const bookedId = payload.classId || payload.slotId;
     try {
-      await api.post("/bookings", payload);
+      await api.post("/bookings", { classId: cls.id });
       confirmIdRef.current = null;
       setConfirm(null);
-      flash(successMsg);
+      flash(`Đã đặt lịch: ${cls.name}`);
       load();
     } catch (err) {
       const msg = err.message || "Không thể đặt lịch, vui lòng thử lại";
       // Lỗi hiện NGAY TRONG sheet xác nhận — toast ngoài màn bị Modal che (L8).
       // Sheet đã đóng/đã đổi sang buổi khác thì rơi về toast, không nuốt và không hiện lạc chỗ.
-      if (confirmIdRef.current === bookedId) setConfirmError(msg);
+      if (confirmIdRef.current === cls.id) setConfirmError(msg);
       else flash(msg, true);
     } finally {
       busyRef.current = false;
@@ -152,10 +143,10 @@ export default function BookingScreen() {
     }
   };
 
-  const openConfirm = (kind, item) => {
+  const openConfirm = (cls) => {
     setConfirmError("");
-    confirmIdRef.current = item.id;
-    setConfirm({ kind, item });
+    confirmIdRef.current = cls.id;
+    setConfirm(cls);
   };
 
   const closeConfirm = () => {
@@ -169,26 +160,57 @@ export default function BookingScreen() {
   const days = Array.from({ length: 7 }, (_, i) => new Date(Date.now() + i * 86400000));
   const activeDay = days[dayIndex];
 
-  // Bộ tab khả dụng: chỉ bộ môn khách có gói active, thứ tự cố định; PT cuối cùng
-  const availableTabs = GROUP_TABS.filter(([key]) => myTypes?.includes(key));
-  if (myTypes?.includes("pt")) availableTabs.push(["pt", "PT"]); // tab chứa cả PT 1:1 lẫn PT nhóm
-  // Tab đang chọn không còn khả dụng (gói vừa hết...) -> rơi về tab đầu
-  const activeTab = availableTabs.some(([k]) => k === tab) ? tab : availableTabs[0]?.[0] ?? null;
+  // her-35: buổi nào khách ĐẶT ĐƯỢC = có gói còn hiệu lực ĐÚNG loại hình và CHỨA bộ môn
+  // của buổi. Đây chỉ là lớp hiển thị; luật thật vẫn ở server (H7, C1).
+  const activePkgs = (myPackages || []).filter((p) => p.status === "active");
+  const matchesPkg = (x) =>
+    activePkgs.some((p) => p.format === x.format && (p.serviceTypes || []).includes(x.serviceType));
+  const matched = classes.filter(matchesPkg);
+  const bookedSet = new Set(myBookedIds);
 
-  const dayClasses = classes.filter(
-    (x) => x.serviceType === activeTab && dayKey(x.startAt) === dayKey(activeDay)
-  );
-  const daySlots = trainers.flatMap((t) =>
-    (t.slots || [])
-      .filter((s) => dayKey(s.startAt) === dayKey(activeDay))
-      .map((s) => ({ ...s, trainer: t.name, specialty: t.specialty }))
-  );
-  const sorted = (activeTab === "pt" ? daySlots : dayClasses)
-    .slice()
+  // Bộ môn của khách (gộp mọi gói active) — hàng chip bộ môn CHỈ hiện khi có từ 2 môn.
+  // Nhãn lấy từ danh mục; danh mục lỗi/thiếu môn thì dùng chính key làm nhãn.
+  const myDisciplines = [...new Set(activePkgs.flatMap((p) => p.serviceTypes || []))];
+  const catalogKeys = disciplines.map((d) => d.key);
+  const disciplineChips = [
+    ...catalogKeys.filter((k) => myDisciplines.includes(k)),
+    ...myDisciplines.filter((k) => !catalogKeys.includes(k)),
+  ].map((k) => ({ key: k, label: disciplines.find((d) => d.key === k)?.label || k }));
+  const showDisciplines = myDisciplines.length > 1;
+  const activeDiscipline = showDisciplines && myDisciplines.includes(filterDiscipline) ? filterDiscipline : null;
+
+  // Chip HLV lấy từ chính danh sách buổi đang hiện (cả 7 ngày, để đổi ngày không mất lựa chọn).
+  // Giới hạn đã biết: lọc theo TÊN nên 2 HLV trùng tên sẽ gộp chung 1 chip (/classes chỉ trả
+  // tên HLV, không trả id) — hiếm gặp, chấp nhận cho tới khi API trả kèm coachId.
+  const coachesOf = (discipline) => [
+    ...new Set(
+      matched
+        .filter((x) => !discipline || x.serviceType === discipline)
+        .map((x) => x.coach)
+        .filter(Boolean)
+    ),
+  ].sort((a, b) => a.localeCompare(b, "vi"));
+  const coachNames = coachesOf(activeDiscipline);
+  // Đổi bộ môn mà HLV đang chọn không còn buổi nào ở môn đó -> bỏ chọn HLV luôn,
+  // không để chip HLV "tự bật lại" khi quay về Tất cả
+  const pickDiscipline = (key) => {
+    setFilterDiscipline(key);
+    if (filterCoach && !coachesOf(key).includes(filterCoach)) setFilterCoach(null);
+  };
+  const activeCoach = coachNames.includes(filterCoach) ? filterCoach : null;
+
+  const dayMatched = matched.filter((x) => dayKey(x.startAt) === dayKey(activeDay));
+  const visible = dayMatched
+    .filter((x) => !activeDiscipline || x.serviceType === activeDiscipline)
+    .filter((x) => !activeCoach || x.coach === activeCoach)
+    .filter((x) => !onlyAvailable || (x.spotsLeft > 0 && !bookedSet.has(String(x.id))))
     .sort((a, b) => new Date(a.startAt) - new Date(b.startAt));
 
   // Khách không có gói còn hiệu lực: không hiện danh sách — hướng dẫn liên hệ quầy (mục 2)
-  const noPackage = myTypes !== null && availableTabs.length === 0;
+  const noPackage = myPackages !== null && activePkgs.length === 0;
+
+  const chipStyle = (on) => [styles.chip, { borderColor: on ? c.primaryTint : c.line }, on && { backgroundColor: c.primaryTint }];
+  const chipTextStyle = (on) => [styles.chipText, { color: on ? c.primary : c.ink }];
 
   return (
     <View style={{ flex: 1, backgroundColor: c.bg }}>
@@ -206,25 +228,13 @@ export default function BookingScreen() {
             <Text style={[styles.noPkgText, { color: c.primary }]}>
               {hasPausedOnly
                 ? "Gói của bạn đang bảo lưu — ghé quầy lễ tân để mở lại là đặt lịch được ngay."
-                : "Bạn chưa có gói tập còn hiệu lực. Ghé quầy lễ tân để mua gói — có gói là màn này sẽ hiện lịch của đúng bộ môn bạn tập."}
+                : "Bạn chưa có gói tập còn hiệu lực. Ghé quầy lễ tân để mua gói — có gói là màn này sẽ hiện đúng buổi bạn đặt được."}
             </Text>
           </View>
         </ScrollView>
       ) : (
         <>
           <View style={{ paddingHorizontal: 22 }}>
-            <View style={[styles.tabs, { borderBottomColor: c.line }]}>
-              {availableTabs.map(([key, label]) => (
-                <TouchableOpacity
-                  key={key}
-                  onPress={() => setTab(key)}
-                  style={[styles.tabBtn, activeTab === key && { borderBottomWidth: 2.5, borderBottomColor: c.primary }]}
-                >
-                  <Text style={[styles.tabLabel, { color: activeTab === key ? c.primary : c.inkSoft }]}>{label}</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-
             <View style={styles.days}>
               {days.map((d, i) => (
                 <TouchableOpacity
@@ -239,6 +249,46 @@ export default function BookingScreen() {
                 </TouchableOpacity>
               ))}
             </View>
+
+            {/* Chip bộ môn chỉ có ý nghĩa khi gói của khách phủ từ 2 môn trở lên */}
+            {showDisciplines && (
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipRow}>
+                <TouchableOpacity onPress={() => pickDiscipline(null)} style={chipStyle(!activeDiscipline)}>
+                  <Text style={chipTextStyle(!activeDiscipline)}>Tất cả</Text>
+                </TouchableOpacity>
+                {disciplineChips.map((d) => (
+                  <TouchableOpacity
+                    key={d.key}
+                    onPress={() => pickDiscipline(d.key)}
+                    style={chipStyle(activeDiscipline === d.key)}
+                  >
+                    <Text style={chipTextStyle(activeDiscipline === d.key)}>{d.label}</Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            )}
+
+            <View style={styles.filterRow}>
+              <TouchableOpacity onPress={() => setOnlyAvailable((v) => !v)} style={chipStyle(onlyAvailable)}>
+                <Text style={chipTextStyle(onlyAvailable)}>Còn chỗ</Text>
+              </TouchableOpacity>
+              {/* flex:1 bắt buộc — ScrollView ngang không tự co, thiếu là tràn mép phải */}
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                style={{ flex: 1 }}
+                contentContainerStyle={styles.chipRow}
+              >
+                <TouchableOpacity onPress={() => setFilterCoach(null)} style={chipStyle(!activeCoach)}>
+                  <Text style={chipTextStyle(!activeCoach)}>Tất cả HLV</Text>
+                </TouchableOpacity>
+                {coachNames.map((n) => (
+                  <TouchableOpacity key={n} onPress={() => setFilterCoach(n)} style={chipStyle(activeCoach === n)}>
+                    <Text style={chipTextStyle(activeCoach === n)}>{n}</Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            </View>
           </View>
 
           <ScrollView
@@ -247,86 +297,58 @@ export default function BookingScreen() {
           >
             {/* Chỉ khẳng định "ngày trống" khi ĐÃ tải được dữ liệu — lỗi mạng lần đầu thì
                 errorMsg ở trên nói lý do, không hiện empty-state sai sự thật (review N1) */}
-            {sorted.length === 0 && !loading && myTypes !== null && !errorMsg && (
-              <Text style={[styles.empty, { color: c.inkSoft }]}>Ngày này chưa có khung giờ nào.</Text>
+            {visible.length === 0 && !loading && myPackages !== null && !errorMsg && (
+              <Text style={[styles.empty, { color: c.inkSoft }]}>
+                {dayMatched.length > 0 ? "Không có buổi nào khớp bộ lọc." : "Ngày này chưa có buổi nào."}
+              </Text>
             )}
 
-            {activeTab !== "pt" &&
-              sorted.map((x, i) => (
-                <TimeRow
-                  key={x.id}
-                  time={fmtTime(x.startAt)}
-                  sub={`${Math.round((new Date(x.endAt) - new Date(x.startAt)) / 60000)}'`}
-                  title={x.name}
-                  meta={x.spotsLeft === 0 ? `${x.coach} · hết chỗ` : `${x.coach} · còn ${x.spotsLeft}/${x.capacity} chỗ`}
-                  last={i === sorted.length - 1}
-                  right={
-                    myBookedIds.includes(String(x.id)) ? (
-                      <AppButton variant="ghost" disabled style={styles.smallBtn}>
-                        Đã đặt
-                      </AppButton>
-                    ) : (
-                      <AppButton
-                        variant={x.spotsLeft === 0 ? "ghost" : "primary"}
-                        disabled={x.spotsLeft === 0 || busy}
-                        style={styles.smallBtn}
-                        onPress={() => openConfirm("group", x)}
-                      >
-                        {x.spotsLeft === 0 ? "Hết chỗ" : "Đặt"}
-                      </AppButton>
-                    )
-                  }
-                />
-              ))}
-
-            {activeTab === "pt" &&
-              sorted.map((s, i) => (
-                <TimeRow
-                  key={s.id}
-                  time={fmtTime(s.startAt)}
-                  title={`${s.capacity > 1 ? "PT nhóm" : "PT"} — ${s.trainer}`}
-                  meta={
-                    s.capacity > 1
-                      ? `${s.specialty ? `${s.specialty} · ` : ""}còn ${Math.max(s.capacity - s.bookedCount, 0)}/${s.capacity} chỗ`
-                      : s.specialty
-                  }
-                  last={i === sorted.length - 1}
-                  right={
-                    myBookedIds.includes(String(s.id)) ? (
-                      <AppButton variant="ghost" disabled style={styles.smallBtn}>
-                        Đã đặt
-                      </AppButton>
-                    ) : s.full ? (
-                      // Slot đã kín vẫn hiển thị cho thấy hệ thống đông (góp ý 16/08)
-                      <AppButton variant="ghost" disabled style={styles.smallBtn}>
-                        Hết chỗ
-                      </AppButton>
-                    ) : (
-                      <AppButton disabled={busy} style={styles.smallBtn} onPress={() => openConfirm("pt", s)}>
-                        Đặt
-                      </AppButton>
-                    )
-                  }
-                />
-              ))}
+            {visible.map((x, i) => (
+              <TimeRow
+                key={x.id}
+                time={fmtTime(x.startAt)}
+                sub={`${Math.round((new Date(x.endAt) - new Date(x.startAt)) / 60000)}'`}
+                // her-38: dòng đậm thống nhất mọi vai — tên lớp · loại hình · HLV
+                title={classTitle(x)}
+                meta={x.spotsLeft === 0 ? "hết chỗ" : `còn ${x.spotsLeft}/${x.capacity} chỗ`}
+                last={i === visible.length - 1}
+                right={
+                  bookedSet.has(String(x.id)) ? (
+                    <AppButton variant="ghost" disabled style={styles.smallBtn}>
+                      Đã đặt
+                    </AppButton>
+                  ) : (
+                    // Buổi đã kín vẫn hiển thị cho thấy hệ thống đông (góp ý 16/08)
+                    <AppButton
+                      variant={x.spotsLeft === 0 ? "ghost" : "primary"}
+                      disabled={x.spotsLeft === 0 || busy}
+                      style={styles.smallBtn}
+                      onPress={() => openConfirm(x)}
+                    >
+                      {x.spotsLeft === 0 ? "Hết chỗ" : "Đặt"}
+                    </AppButton>
+                  )
+                }
+              />
+            ))}
           </ScrollView>
         </>
       )}
 
       <FormSheet visible={!!confirm} title="Xác nhận đặt lịch" onClose={closeConfirm}>
         {!!confirm && (() => {
-          const it = confirm.item;
-          const isPT = confirm.kind === "pt";
-          const serviceType = isPT ? "pt" : it.serviceType;
-          const pkg = predictPackage(myPackages, serviceType, it.startAt);
+          const it = confirm;
+          const pkg = predictPackage(myPackages || [], it);
           const minutes = Math.round((new Date(it.endAt) - new Date(it.startAt)) / 60000);
           return (
             <View>
               <View style={[styles.cRow, { borderBottomColor: c.hairline }]}>
                 <Text style={[styles.cLabel, { color: c.inkSoft }]}>Buổi tập</Text>
-                <Text style={[styles.cValue, { color: c.ink }]}>
-                  {isPT ? (it.capacity > 1 ? "Buổi PT nhóm" : "Buổi PT 1:1") : it.name}
-                </Text>
+                <Text style={[styles.cValue, { color: c.ink }]}>{it.name}</Text>
+              </View>
+              <View style={[styles.cRow, { borderBottomColor: c.hairline }]}>
+                <Text style={[styles.cLabel, { color: c.inkSoft }]}>Loại hình</Text>
+                <Text style={[styles.cValue, { color: c.ink }]}>{`Buổi ${it.format}`}</Text>
               </View>
               <View style={[styles.cRow, { borderBottomColor: c.hairline }]}>
                 <Text style={[styles.cLabel, { color: c.inkSoft }]}>Ngày giờ</Text>
@@ -336,7 +358,7 @@ export default function BookingScreen() {
               </View>
               <View style={[styles.cRow, { borderBottomColor: c.hairline }]}>
                 <Text style={[styles.cLabel, { color: c.inkSoft }]}>HLV</Text>
-                <Text style={[styles.cValue, { color: c.ink }]}>{isPT ? it.trainer : it.coach}</Text>
+                <Text style={[styles.cValue, { color: c.ink }]}>{it.coach}</Text>
               </View>
               <View style={styles.cRowLast}>
                 <Text style={[styles.cLabel, { color: c.inkSoft }]}>Trừ vào gói</Text>
@@ -352,16 +374,7 @@ export default function BookingScreen() {
                 )}
               </View>
               {!!confirmError && <Text style={[styles.cError, { color: c.danger }]}>{confirmError}</Text>}
-              <AppButton
-                style={{ marginTop: 18 }}
-                disabled={busy}
-                onPress={() =>
-                  book(
-                    isPT ? { type: "pt", slotId: it.id } : { type: "group", classId: it.id },
-                    isPT ? `Đã đặt lịch với ${it.trainer}` : `Đã đặt lịch: ${it.name}`
-                  )
-                }
-              >
+              <AppButton style={{ marginTop: 18 }} disabled={busy} onPress={() => book(it)}>
                 {busy ? "Đang đặt..." : "Xác nhận đặt lịch"}
               </AppButton>
             </View>
@@ -380,13 +393,14 @@ export default function BookingScreen() {
 }
 
 const styles = StyleSheet.create({
-  tabs: { flexDirection: "row", gap: 20, borderBottomWidth: 1, marginTop: 4 },
-  tabBtn: { paddingBottom: 9 },
-  tabLabel: { fontSize: 13, fontWeight: "700" },
-  days: { flexDirection: "row", gap: 6, marginTop: 14, marginBottom: 6 },
+  days: { flexDirection: "row", gap: 6, marginTop: 10, marginBottom: 6 },
   day: { flex: 1, borderRadius: 10, paddingVertical: 8, alignItems: "center" },
   dayName: { fontSize: 10, fontWeight: "700" },
   dayNum: { fontSize: 14, fontWeight: "800" },
+  chipRow: { flexDirection: "row", gap: 8, paddingVertical: 6, paddingRight: 8 },
+  filterRow: { flexDirection: "row", alignItems: "center", gap: 8 },
+  chip: { paddingVertical: 6, paddingHorizontal: 12, borderRadius: 999, borderWidth: 1.5 },
+  chipText: { fontSize: 12, fontWeight: "700" },
   error: { fontSize: 12.5, marginHorizontal: 22, marginTop: 10, fontWeight: "700" },
   empty: { fontSize: 13, marginTop: 18 },
   smallBtn: { paddingVertical: 8, paddingHorizontal: 14 },

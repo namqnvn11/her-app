@@ -4,6 +4,7 @@ const User = require("../models/User");
 const Trainer = require("../models/Trainer");
 const Package = require("../models/Package");
 const Booking = require("../models/Booking");
+const AutoScheduleRule = require("../models/AutoScheduleRule");
 const { requireAuth } = require("../middleware/auth");
 const { MIN_CANCEL_HOURS } = require("../utils/cancelRule");
 const { ATTENDANCE_OPEN_BEFORE_MINUTES } = require("../utils/attendanceRule");
@@ -32,7 +33,7 @@ router.patch("/", wrap(async (req, res) => {
   await req.user.save();
 
   // Tài khoản có hồ sơ HLV (role trainer HOẶC admin kiêm HLV — review her-11 N4) tự đổi tên
-  // -> đồng bộ hồ sơ Trainer (tên hiện ở lịch lớp, danh sách đặt PT)
+  // -> đồng bộ hồ sơ Trainer (tên hiện ở lịch lớp, danh sách đặt của khách)
   if (name !== undefined && req.user.trainerId) {
     await Trainer.updateOne({ _id: req.user.trainerId }, { $set: { name: req.user.name } });
   }
@@ -74,7 +75,7 @@ router.post("/change-password", wrap(async (req, res) => {
 
 // POST /api/me/trainer-profile { name, specialties? } — admin KIÊM HLV (mục 6; chuyên môn CHỌN từ danh mục — her-19):
 // admin bật 1 lần trong màn Cá nhân → tạo hồ sơ Trainer gắn vào tài khoản; từ đó xuất hiện
-// trong danh sách HLV, tự mở khung PT, khách đặt như HLV thường. CHỈ admin (H5) — tài khoản
+// trong danh sách HLV, tự mở buổi 1:1/1:2, khách đặt như HLV thường. CHỈ admin (H5) — tài khoản
 // HLV thường đã có hồ sơ từ lúc quầy tạo; không mở đường tự phong HLV cho role khác.
 router.post("/trainer-profile", wrap(async (req, res) => {
   if (req.user.role !== "admin") {
@@ -115,6 +116,75 @@ router.post("/trainer-profile", wrap(async (req, res) => {
     return res.status(400).json({ error: "Tài khoản này đã có hồ sơ HLV" });
   }
   res.status(201).json({ user: updated.toPublicJSON(), trainer: { id: trainer._id, name: trainer.name } });
+}));
+
+// her-34: admin sửa hồ sơ HLV của CHÍNH MÌNH (tên hiển thị + chuyên môn) — màn Cá nhân.
+// CHỈ admin (H5): HLV thường không tự đổi chuyên môn (chuyên môn do quản lý đặt lúc tạo).
+function requireOwnTrainerProfile(req, res) {
+  if (req.user.role !== "admin") {
+    res.status(403).json({ error: "Chỉ admin mới xem/sửa được hồ sơ HLV của chính mình" });
+    return false;
+  }
+  if (!req.user.trainerId) {
+    res.status(400).json({ error: "Tài khoản này chưa có hồ sơ HLV — hãy bấm Mở hồ sơ HLV trước" });
+    return false;
+  }
+  return true;
+}
+
+// GET /api/me/trainer-profile — đọc để điền sẵn form sửa
+router.get("/trainer-profile", wrap(async (req, res) => {
+  if (!requireOwnTrainerProfile(req, res)) return;
+  const trainer = await Trainer.findById(req.user.trainerId);
+  if (!trainer) return res.status(404).json({ error: "Không tìm thấy hồ sơ HLV" });
+  res.json({ trainer: { id: trainer._id, name: trainer.name, specialties: trainer.specialties } });
+}));
+
+// PATCH /api/me/trainer-profile { name?, specialties? } — validate y hệt lúc tạo (POST trên)
+router.patch("/trainer-profile", wrap(async (req, res) => {
+  if (!requireOwnTrainerProfile(req, res)) return;
+  const { name, specialties } = req.body;
+  if (name === undefined && specialties === undefined) {
+    return res.status(400).json({ error: "Không có gì để sửa" });
+  }
+
+  const set = {};
+  if (name !== undefined) {
+    if (typeof name !== "string" || !name.trim() || name.trim().length > 100) {
+      return res.status(400).json({ error: "Vui lòng nhập tên hiển thị của HLV (tối đa 100 ký tự)" });
+    }
+    set.name = name.trim();
+  }
+  if (specialties !== undefined) {
+    const keys = [...new Set(Array.isArray(specialties) ? specialties : [])];
+    if (keys.length === 0) {
+      return res.status(400).json({ error: "Chọn ít nhất 1 chuyên môn (từ danh mục bộ môn)" });
+    }
+    for (const k of keys) {
+      if (typeof k !== "string" || !(await isValidClassType(k))) {
+        return res.status(400).json({ error: "Chuyên môn không hợp lệ — chọn từ danh mục bộ môn" });
+      }
+    }
+    // Review her-34 #1: generator Lịch tự động KHÔNG re-check chuyên môn — bỏ môn đang có
+    // luật gán cho chính mình sẽ sinh lớp trái chuyên môn vô hạn. Chặn cả luật đang TẮT
+    // (bật lại là sinh ngay, PATCH active không re-check).
+    const conflictRule = await AutoScheduleRule.findOne({
+      coachId: req.user.trainerId,
+      serviceType: { $nin: keys },
+    });
+    if (conflictRule) {
+      const label = await labelOf(conflictRule.serviceType);
+      return res.status(400).json({
+        error: `Bạn đang có luật Lịch tự động môn ${label} — xoá luật đó trước khi bỏ chuyên môn này`,
+      });
+    }
+    set.specialties = keys;
+    set.specialty = (await Promise.all(keys.map((k) => labelOf(k)))).join(" · ");
+  }
+
+  const trainer = await Trainer.findByIdAndUpdate(req.user.trainerId, { $set: set }, { new: true });
+  if (!trainer) return res.status(404).json({ error: "Không tìm thấy hồ sơ HLV" });
+  res.json({ trainer: { id: trainer._id, name: trainer.name, specialties: trainer.specialties } });
 }));
 
 // So sánh tất định cho danh sách gói: hạn gần trước (không hạn cuối), hạn bằng nhau thì
@@ -194,10 +264,11 @@ router.get("/history", wrap(async (req, res) => {
 function serializeBooking(b) {
   return {
     id: b._id,
-    type: b.type,
-    // id lớp/slot để màn Đặt lịch đánh dấu "Đã đặt" ngay trên danh sách (góp ý 16/08)
+    // her-35: bộ môn + loại hình là SNAPSHOT lúc đặt — app hiện nhãn buổi không cần join lớp
+    serviceType: b.serviceType,
+    format: b.format,
+    // id lớp để màn Đặt lịch đánh dấu "Đã đặt" ngay trên danh sách (góp ý 16/08)
     classId: b.classId,
-    slotId: b.slotId,
     title: b.title,
     coach: b.trainerId?.name || "",
     startAt: b.startAt,

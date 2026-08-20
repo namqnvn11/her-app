@@ -2,15 +2,16 @@ const mongoose = require("mongoose");
 const Booking = require("../models/Booking");
 const Trainer = require("../models/Trainer");
 const TrainerRate = require("../models/TrainerRate");
+const { FORMATS, FORMAT_RATE_FIELD } = require("./formats");
 
 // ---- Tính bảng lương 1 tháng (mục 7) ----
-// Nguyên tắc (chốt 16/08, xem testcase_her-12):
+// Nguyên tắc (chốt 16/08, cập nhật her-35 19/08 — xem testcase_her-12/her-35):
 // - CHỈ tính buổi điểm danh THẬT: booking `completed` + `attendanceAt != null`
 //   (buổi sweep tự hoàn tất có attendanceAt null — không tính, thiết kế her-10).
 // - Buổi thuộc tháng theo startAt (giờ máy — VN). HLV của buổi = booking.trainerId
-//   (đổi HLV thì người dạy thật hưởng — title/trainerId đã sync ở schedule.routes).
-// - 1 "buổi" lớp nhóm = 1 classId; 1 "buổi" PT = 1 slotId; PT nhóm vs 1:1 phân theo
-//   title snapshot ("PT nhóm — ..." — giữ đúng dạng qua các lần đổi HLV/capacity, her-11).
+//   (đổi HLV thì người dạy thật hưởng — trainerId đã sync ở schedule.routes).
+// - 1 "buổi" = 1 lớp (classId); LOẠI HÌNH buổi đọc từ snapshot `format` của booking
+//   — KHÔNG so chuỗi title.
 // - per "session": đếm buổi; per "attendee": đếm KHÁCH có mặt (no_show không tính).
 // - Mức áp theo bản ghi TrainerRate có effectiveFrom <= startAt buổi (gần nhất);
 //   chưa từng thiết lập -> 0đ. Lương cứng: bản ghi hiệu lực MỚI NHẤT trong tháng.
@@ -45,7 +46,8 @@ async function computeMonth(month) {
       status: "completed",
       attendanceAt: { $ne: null },
       startAt: { $gte: range.from, $lt: range.to },
-    }).select("trainerId type classId slotId title startAt"),
+      classId: { $ne: null }, // DB thật chưa reseed có thể còn booking PT cũ không classId
+    }).select("trainerId classId format startAt"),
   ]);
 
   const ratesByTrainer = {};
@@ -53,21 +55,17 @@ async function computeMonth(month) {
     (ratesByTrainer[r.trainerId.toString()] = ratesByTrainer[r.trainerId.toString()] || []).push(r);
   }
 
-  // Gom booking thành "buổi" theo classId/slotId cho từng HLV
-  const sessionsByTrainer = {}; // trainerId -> Map key -> { kind, startAt, attendees }
+  // Gom booking thành "buổi" theo classId cho từng HLV — nhiều khách cùng lớp = 1 buổi.
+  // Loại hình lấy từ snapshot format của booking (mọi booking cùng lớp có cùng format:
+  // lớp đã có khách đặt thì KHÔNG đổi được loại hình — schedule.routes chặn).
+  const sessionsByTrainer = {}; // trainerId -> Map classId -> { format, startAt, attendees }
   for (const b of bookings) {
+    if (!b.classId || !b.format) continue; // booking cũ/rác thiếu snapshot — bỏ qua, không cho 500 cả bảng lương
     const tid = b.trainerId.toString();
-    // Gộp theo classId/slotId — KHÔNG đưa kind vào key (review her-12 V2: khung 1:1 nâng lên
-    // nhóm giữa chừng làm title các booking cùng slot khác nhau; kind chốt sau khi gộp —
-    // có bất kỳ booking "PT nhóm" nào thì cả buổi là PT nhóm, không tách thành 2 buổi)
-    const key = `${b.type}:${(b.classId || b.slotId || b._id).toString()}`;
+    const key = b.classId.toString();
     const map = (sessionsByTrainer[tid] = sessionsByTrainer[tid] || new Map());
-    if (!map.has(key)) {
-      map.set(key, { kind: b.type === "group" ? "group" : "pt1", startAt: b.startAt, attendees: 0 });
-    }
-    const sess = map.get(key);
-    if (b.type !== "group" && (b.title || "").startsWith("PT nhóm")) sess.kind = "ptGroup";
-    sess.attendees += 1;
+    if (!map.has(key)) map.set(key, { format: b.format, startAt: b.startAt, attendees: 0 });
+    map.get(key).attendees += 1;
   }
 
   // HLV có buổi dạy nhưng hồ sơ Trainer không còn (dữ liệu bất thường) -> vẫn hiện 1 dòng
@@ -84,38 +82,31 @@ async function computeMonth(month) {
       trainerId: t._id,
       trainerName: t.name,
       baseSalary: 0,
-      group: { count: 0, amount: 0, per: "session" },
-      pt1: { count: 0, amount: 0 },
-      ptGroup: { count: 0, amount: 0, per: "session" },
+      byFormat: Object.fromEntries(FORMATS.map((f) => [f, { count: 0, amount: 0, per: "session" }])),
       commission: 0,
       total: 0,
     };
-    // Lương cứng + per hiển thị: theo bản ghi hiệu lực mới nhất trong tháng
+    // Lương cứng + per hiển thị: theo bản ghi hiệu lực mới nhất trong tháng.
+    // LƯU Ý (hành vi có từ her-12, KHÔNG phải bug): nếu admin đổi cách tính GIỮA THÁNG thì
+    // count là số HỖN HỢP (buổi trước ngày đổi tính theo cách cũ) trong khi nhãn `per` hiển thị
+    // theo bản ghi MỚI NHẤT — tiền vẫn đúng vì mỗi buổi áp mức tại ngày diễn ra.
     const current = rateAt(rates, new Date(range.to.getTime() - 1));
     if (current) {
       entry.baseSalary = current.baseSalary;
-      entry.group.per = current.groupPer;
-      entry.ptGroup.per = current.ptGroupPer;
+      for (const f of FORMATS) entry.byFormat[f].per = current[`${FORMAT_RATE_FIELD[f]}Per`];
     }
 
     for (const s of (sessionsByTrainer[tid] || new Map()).values()) {
+      const field = FORMAT_RATE_FIELD[s.format];
+      if (!field) continue; // booking dữ liệu cũ thiếu/lạ loại hình — bỏ qua, không làm hỏng bảng
       const rate = rateAt(rates, s.startAt);
-      if (s.kind === "group") {
-        const per = rate ? rate.groupPer : "session";
-        const units = per === "attendee" ? s.attendees : 1;
-        entry.group.count += units;
-        entry.group.amount += units * (rate ? rate.groupAmount : 0);
-      } else if (s.kind === "pt1") {
-        entry.pt1.count += 1;
-        entry.pt1.amount += rate ? rate.pt1Amount : 0;
-      } else {
-        const per = rate ? rate.ptGroupPer : "session";
-        const units = per === "attendee" ? s.attendees : 1;
-        entry.ptGroup.count += units;
-        entry.ptGroup.amount += units * (rate ? rate.ptGroupAmount : 0);
-      }
+      const per = rate ? rate[`${field}Per`] : "session";
+      const units = per === "attendee" ? s.attendees : 1;
+      const slot = entry.byFormat[s.format];
+      slot.count += units;
+      slot.amount += units * (rate ? rate[`${field}Amount`] : 0);
     }
-    entry.commission = entry.group.amount + entry.pt1.amount + entry.ptGroup.amount;
+    entry.commission = FORMATS.reduce((sum, f) => sum + entry.byFormat[f].amount, 0);
     entry.total = entry.baseSalary + entry.commission;
     return entry;
   });

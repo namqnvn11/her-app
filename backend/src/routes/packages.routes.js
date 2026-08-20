@@ -5,6 +5,7 @@ const Package = require("../models/Package");
 const { requireAuth, requireManagement } = require("../middleware/auth");
 const { PAYMENT_METHODS } = require("../utils/serviceTypes");
 const { isValidPackageType } = require("../utils/disciplines");
+const { isValidFormat, packageShapeError } = require("../utils/formats");
 const { serializePackage } = require("../utils/packages");
 const wrap = require("../utils/asyncHandler");
 
@@ -28,12 +29,15 @@ async function findCustomerOr404(userId, res) {
   return customer;
 }
 
-// POST /api/packages  { userId, name, serviceType, price, totalSessions?, expiresAt? | durationDays?,
-//                       paymentMethod?, paidAmount? }
-// 3 kiểu gói (Q3): chỉ buổi / chỉ thời hạn / cả hai — ít nhất 1 trong 2 (H7).
+// POST /api/packages  { userId, name, serviceTypes: [bộ môn...], format, price, totalSessions?,
+//                       expiresAt? | durationDays?, paymentMethod?, paidAmount? }
+// her-35 (19/08): gói MIX — nhiều BỘ MÔN dùng chung quỹ buổi + đúng 1 LOẠI HÌNH.
+// 2 loại gói: gói BUỔI (loại hình 1:1/1:2/1:4, bộ môn nào cũng được) và gói THỜI HẠN
+// (không giới hạn buổi — chỉ Yoga, loại hình 1:8).
+// 3 kiểu buổi/hạn (Q3): chỉ buổi / chỉ thời hạn / cả hai — ít nhất 1 trong 2 (H7).
 // paidAmount bỏ trống = thu đủ; paidAmount < price = còn nợ, KHÔNG chặn đặt lịch (Q10).
 router.post("/", wrap(async (req, res) => {
-  const { userId, name, serviceType, price, totalSessions, durationDays, expiresAt: expiresAtRaw, paymentMethod, paidAmount } = req.body;
+  const { userId, name, serviceTypes, format, price, totalSessions, durationDays, expiresAt: expiresAtRaw, paymentMethod, paidAmount } = req.body;
 
   const customer = await findCustomerOr404(userId, res);
   if (!customer) return;
@@ -44,8 +48,20 @@ router.post("/", wrap(async (req, res) => {
   if (name.trim().length > 200) {
     return res.status(400).json({ error: "Tên gói tối đa 200 ký tự" });
   }
-  if (!(await isValidPackageType(serviceType))) {
-    return res.status(400).json({ error: "Loại hình phải là gym, pilates, yoga hoặc pt" });
+  // Bộ môn của gói: mảng ≥1, không trùng, mọi phần tử phải nằm trong danh mục bộ môn (her-35)
+  if (!Array.isArray(serviceTypes) || serviceTypes.length < 1) {
+    return res.status(400).json({ error: "Chọn ít nhất 1 bộ môn cho gói" });
+  }
+  if (new Set(serviceTypes).size !== serviceTypes.length) {
+    return res.status(400).json({ error: "Bộ môn trong gói bị trùng lặp" });
+  }
+  for (const st of serviceTypes) {
+    if (!(await isValidPackageType(st))) {
+      return res.status(400).json({ error: "Bộ môn không hợp lệ — chọn từ danh mục bộ môn" });
+    }
+  }
+  if (!isValidFormat(format)) {
+    return res.status(400).json({ error: "Loại hình phải là 1:1, 1:2, 1:4 hoặc 1:8" });
   }
   // Giá VND: số nguyên không âm, cap 1 tỷ đồng/gói để chặn số rác kiểu 1e308
   if (!Number.isInteger(price) || price < 0 || price > 1_000_000_000) {
@@ -64,6 +80,12 @@ router.post("/", wrap(async (req, res) => {
   if (hasDuration && (!Number.isInteger(durationDays) || durationDays < 1 || durationDays > 3650)) {
     return res.status(400).json({ error: "Thời hạn (số ngày) phải là số nguyên dương, tối đa 10 năm" });
   }
+  // her-35: 2 loại gói (chốt 19/08) — gói THỜI HẠN chỉ Yoga 1:8; gói BUỔI chỉ 1:1/1:2/1:4.
+  // Dùng CHUNG helper với pre-validate của model (C5) — chặn ở đây để báo lý do rõ tiếng Việt
+  // thay vì để mongoose ném lỗi validate (C6).
+  const shapeError = packageShapeError({ format, serviceTypes, hasSessions });
+  if (shapeError) return res.status(400).json({ error: shapeError });
+
   let pickedExpiry = null;
   if (hasExpiresAt) {
     pickedExpiry = new Date(expiresAtRaw);
@@ -97,7 +119,8 @@ router.post("/", wrap(async (req, res) => {
   const pkg = await Package.create({
     userId: customer._id,
     name: name.trim(),
-    serviceType,
+    serviceTypes,
+    format,
     price,
     totalSessions: hasSessions ? totalSessions : null,
     activatedAt,

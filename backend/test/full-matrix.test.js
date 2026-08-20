@@ -1,4 +1,6 @@
 // Test tổng lực her-04 — xem docs-her/testcase/testcase_her-04_full_audit.md
+// her-35 (19/08): không còn PTSlot — mọi buổi là LỚP có bộ môn + loại hình (1:1/1:2/1:4/1:8);
+// gói tập dùng serviceTypes[] + format; đặt lịch chỉ cần { classId }.
 // Phần A: ma trận phân quyền TOÀN BỘ endpoint × 5 danh tính (admin/reception/trainer/customer/anon)
 // Phần B: các luồng & biên chưa được cover ở her-01/02/03.
 // DB riêng her_test_e (tự seed), server cổng 4131.
@@ -16,7 +18,6 @@ const S = "http://localhost:4131/api";
 const Booking = require("../src/models/Booking");
 const Package = require("../src/models/Package");
 const GymClass = require("../src/models/GymClass");
-const PTSlot = require("../src/models/PTSlot");
 const Trainer = require("../src/models/Trainer");
 const User = require("../src/models/User");
 
@@ -84,6 +85,12 @@ after(async () => {
 });
 
 // ================= PHẦN A — MA TRẬN PHÂN QUYỀN =================
+// Phạm vi: các endpoint CỐT LÕI — đăng nhập/tài khoản, lịch của tôi, đặt/hủy lịch, xếp lịch,
+// gói tập, danh sách quản lý. Các module còn lại có ma trận role trong suite riêng:
+// bảng lương → payroll.test.js ("matrix: admin đủ quyền; LỄ TÂN 403 TẤT CẢ; HLV chỉ /my…"),
+// Tổng quan → dashboard.test.js ("matrix: mỗi role đúng khối của mình…"),
+// Lịch tự động → auto-schedule.test.js ("matrix + validate…"),
+// roster buổi → roster.test.js ("roster-matrix…"), hồ sơ HLV → trainer-profile.test.js ("tp-matrix…").
 // exp = { admin, reception, trainer, customer, anon } — status kỳ vọng cho từng danh tính.
 // Body/ID cố tình sai để route được phép trả 400/404/410 (chứng minh đã vượt qua tầng quyền
 // mà không tạo dữ liệu thật).
@@ -102,7 +109,9 @@ const MATRIX = [
   { m: "GET", p: "/classes", exp: { admin: 200, reception: 200, trainer: 200, customer: 200, anon: 401 } },
   { m: "GET", p: "/trainers", exp: { admin: 200, reception: 200, trainer: 200, customer: 200, anon: 401 } },
 
-  { m: "POST", p: "/bookings", body: { type: "xxx" }, exp: { admin: 400, reception: 400, trainer: 400, customer: 400, anon: 401 } },
+  // her-35: thiếu hẳn classId -> 400 nói rõ thiếu gì (id rác/không tồn tại mới là 404)
+  { m: "POST", p: "/bookings", body: {}, exp: { admin: 400, reception: 400, trainer: 400, customer: 400, anon: 401 } },
+  { m: "POST", p: "/bookings", body: { classId: "khong-id" }, exp: { admin: 404, reception: 404, trainer: 404, customer: 404, anon: 401 } },
   { m: "DELETE", p: "/bookings/khong-id", exp: { admin: 400, reception: 400, trainer: 400, customer: 400, anon: 401 } },
 
   { m: "GET", p: "/management/bookings", exp: { admin: 200, reception: 200, trainer: 200, customer: 403, anon: 401 } },
@@ -116,13 +125,11 @@ const MATRIX = [
   { m: "GET", p: "/management/classes/khong-id/roster", exp: { admin: 400, reception: 400, trainer: 400, customer: 403, anon: 401 } },
 
   { m: "GET", p: "/schedule/trainers", exp: { admin: 200, reception: 200, trainer: 403, customer: 403, anon: 401 } },
-  { m: "GET", p: "/schedule/classes", exp: { admin: 200, reception: 200, trainer: 403, customer: 403, anon: 401 } },
-  { m: "GET", p: "/schedule/pt-slots", exp: { admin: 200, reception: 200, trainer: 200, customer: 403, anon: 401 } }, // her-11: HLV thấy khung CỦA MÌNH
-  { m: "POST", p: "/schedule/classes", body: {}, exp: { admin: 400, reception: 400, trainer: 403, customer: 403, anon: 401 } },
-  { m: "PATCH", p: "/schedule/classes/khong-id", body: {}, exp: { admin: 400, reception: 400, trainer: 403, customer: 403, anon: 401 } },
-  { m: "DELETE", p: "/schedule/classes/khong-id", exp: { admin: 400, reception: 400, trainer: 403, customer: 403, anon: 401 } },
-  { m: "POST", p: "/schedule/pt-slots", body: {}, exp: { admin: 400, reception: 400, trainer: 400, customer: 403, anon: 401 } }, // her-11: HLV được tạo (thiếu field -> 400)
-  { m: "DELETE", p: "/schedule/pt-slots/khong-id", exp: { admin: 404, reception: 404, trainer: 404, customer: 403, anon: 401 } }, // her-11: id rác -> 404 (role gate trước)
+  // her-35: HLV xem/tạo/sửa/xoá được lịch CỦA MÌNH -> qua được tầng quyền (200/400/404), khách 403
+  { m: "GET", p: "/schedule/classes", exp: { admin: 200, reception: 200, trainer: 200, customer: 403, anon: 401 } },
+  { m: "POST", p: "/schedule/classes", body: {}, exp: { admin: 400, reception: 400, trainer: 400, customer: 403, anon: 401 } },
+  { m: "PATCH", p: "/schedule/classes/khong-id", body: {}, exp: { admin: 404, reception: 404, trainer: 404, customer: 403, anon: 401 } },
+  { m: "DELETE", p: "/schedule/classes/khong-id", exp: { admin: 404, reception: 404, trainer: 404, customer: 403, anon: 401 } },
 
   { m: "GET", p: "/accounts", exp: { admin: 200, reception: 200, trainer: 403, customer: 403, anon: 401 } },
   { m: "POST", p: "/accounts", body: { name: "x", phone: "abc", password: "matkhau6", role: "customer" }, exp: { admin: 400, reception: 400, trainer: 403, customer: 403, anon: 401 } },
@@ -144,6 +151,36 @@ test("A: ma trận phân quyền toàn bộ endpoint × 5 danh tính", async () 
     }
   }
   assert.deepEqual(failures, [], `\n${failures.join("\n")}`);
+});
+
+// her-35: HLV tự mở lịch cho CHÍNH MÌNH — chỉ 1:1/1:2, không mở hộ người khác (H5)
+test("A2: HLV mở buổi 1:1 cho mình -> 201; 1:4 -> 403; mở hộ HLV khác -> 403", async () => {
+  const linhId = (await User.findOne({ phone: "0911111111" })).trainerId;
+  const other = await Trainer.findOne({ _id: { $ne: linhId } });
+  const mk = (body) => call("/schedule/classes", { method: "POST", token: tokens.trainer, body });
+
+  const own = await mk({
+    serviceType: "pilates", format: "1:1", coachId: linhId.toString(),
+    startAt: hoursFromNow(500), endAt: hoursFromNow(501),
+  });
+  assert.equal(own.status, 201, JSON.stringify(own.data));
+  assert.equal(own.data.class.capacity, 1, "1:1 -> sức chứa 1 do server gán");
+
+  const big = await mk({
+    serviceType: "pilates", format: "1:4", coachId: linhId.toString(),
+    startAt: hoursFromNow(502), endAt: hoursFromNow(503),
+  });
+  assert.equal(big.status, 403, JSON.stringify(big.data));
+  assert.match(big.data.error, /1:1 hoặc 1:2/);
+
+  const forOther = await mk({
+    serviceType: "pilates", format: "1:1", coachId: other._id.toString(),
+    startAt: hoursFromNow(504), endAt: hoursFromNow(505),
+  });
+  assert.equal(forOther.status, 403, JSON.stringify(forOther.data));
+  assert.match(forOther.data.error, /chính mình/);
+
+  await GymClass.deleteOne({ _id: own.data.class._id });
 });
 
 // ================= PHẦN B — LUỒNG & BIÊN BỔ SUNG =================
@@ -204,14 +241,16 @@ test("B6: khách bị chặn hủy buổi sát giờ (403) nhưng lễ tân hủ
   assert.equal(denied.status, 403);
   assert.match(denied.data.error, /3 tiếng/);
 
+  // her-35: buổi sát giờ của seed là Pilates 1:1 -> trừ gói MIX (pilates, loại hình 1:1)
   const minhId = (await User.findOne({ phone: "0909090909" }))._id;
-  const before = (await Package.findOne({ userId: minhId, serviceType: "pt" })).usedSessions;
+  const mixQuery = { userId: minhId, serviceTypes: "pilates", format: "1:1" };
+  const before = (await Package.findOne(mixQuery)).usedSessions;
   const staffCancel = await call(`/bookings/${soon.id}`, { method: "DELETE", token: tokens.reception });
   assert.equal(staffCancel.status, 200);
   assert.equal(
-    (await Package.findOne({ userId: minhId, serviceType: "pt" })).usedSessions,
+    (await Package.findOne(mixQuery)).usedSessions,
     before - 1,
-    "lễ tân hủy hộ phải hoàn buổi cho khách (về đúng gói PT — H7)"
+    "lễ tân hủy hộ phải hoàn buổi cho khách (về ĐÚNG gói đã trừ — H7/C2)"
   );
 });
 
@@ -235,78 +274,75 @@ test("B8+B9: guard vai trò trên dữ liệu — id HLV vào endpoint customer 
   assert.ok(list.data.accounts.every((a) => a.role === "customer"), "không được lộ tài khoản ngoài phạm vi quản lý");
 });
 
-test("B10: classId là ID của PT slot (nhầm collection) -> 404, không mất buổi", async () => {
+test("B10: classId là ID của collection khác (nhầm bảng) -> 404, không mất buổi", async () => {
   const minh = await login("0909090909");
   const before = (await call("/me/package", { token: minh.token })).data.package.usedSessions;
-  const slot = await PTSlot.findOne();
-  const r = await call("/bookings", { method: "POST", token: minh.token, body: { type: "group", classId: slot._id } });
+  const notAClass = await User.findOne({ phone: "0912345678" }); // ObjectId hợp lệ nhưng không phải lớp
+  const r = await call("/bookings", { method: "POST", token: minh.token, body: { classId: notAClass._id } });
   assert.equal(r.status, 404);
   assert.equal((await call("/me/package", { token: minh.token })).data.package.usedSessions, before);
 });
 
-test("B11: đặt PT trùng giờ với lớp group đã đặt -> 400 'trùng giờ'", async () => {
+test("B11: đặt buổi trùng giờ với buổi đã đặt (HLV khác) -> 400 'trùng giờ'", async () => {
   const vy = await login("0912345678");
   const trainers = (await call("/schedule/trainers", { token: tokens.reception })).data.trainers;
 
-  // Lớp và slot cùng khung giờ xa (tránh đụng dữ liệu khác)
-  const cls = await call("/schedule/classes", {
+  // 2 buổi Yoga 1:8 của 2 HLV khác nhau, khung giờ giao nhau (giờ xa để tránh đụng dữ liệu khác)
+  const first = await call("/schedule/classes", {
     method: "POST", token: tokens.reception,
-    body: { name: "Overlap G", serviceType: "yoga", coachId: trainers[0].id, startAt: hoursFromNow(260), endAt: hoursFromNow(261) },
+    body: { name: "Overlap 1", serviceType: "yoga", format: "1:8", coachId: trainers[0].id, startAt: hoursFromNow(260), endAt: hoursFromNow(261) },
   });
-  const slot = await call("/schedule/pt-slots", {
+  assert.equal(first.status, 201, JSON.stringify(first.data));
+  const second = await call("/schedule/classes", {
     method: "POST", token: tokens.reception,
-    body: { trainerId: trainers[1].id, startAt: hoursFromNow(260.5), endAt: hoursFromNow(261.5) },
+    body: { name: "Overlap 2", serviceType: "yoga", format: "1:8", coachId: trainers[1].id, startAt: hoursFromNow(260.5), endAt: hoursFromNow(261.5) },
   });
+  assert.equal(second.status, 201, JSON.stringify(second.data));
 
-  const bookG = await call("/bookings", { method: "POST", token: vy.token, body: { type: "group", classId: cls.data.class._id } });
-  assert.equal(bookG.status, 201, JSON.stringify(bookG.data));
-  const bookPT = await call("/bookings", { method: "POST", token: vy.token, body: { type: "pt", slotId: slot.data.slot._id } });
-  assert.equal(bookPT.status, 400);
-  assert.match(bookPT.data.error, /trùng giờ/);
+  const book1 = await call("/bookings", { method: "POST", token: vy.token, body: { classId: first.data.class._id } });
+  assert.equal(book1.status, 201, JSON.stringify(book1.data));
+  const book2 = await call("/bookings", { method: "POST", token: vy.token, body: { classId: second.data.class._id } });
+  assert.equal(book2.status, 400);
+  assert.match(book2.data.error, /trùng giờ/);
   // Buổi bị từ chối không được trừ vào gói
-  await call(`/bookings/${bookG.data.booking.id}`, { method: "DELETE", token: vy.token });
+  await call(`/bookings/${book1.data.booking.id}`, { method: "DELETE", token: vy.token });
 });
 
-test("B12: xoá lớp/slot trống được, có khách thì bị chặn", async () => {
+test("B12: xoá buổi trống được, buổi đã có khách thì bị chặn (cả lớp nhóm lẫn 1:1)", async () => {
   const vy = await login("0912345678");
   const trainers = (await call("/schedule/trainers", { token: tokens.reception })).data.trainers;
 
   const freeCls = await call("/schedule/classes", {
     method: "POST", token: tokens.reception,
-    body: { name: "Xoa duoc", serviceType: "yoga", coachId: trainers[0].id, startAt: hoursFromNow(270), endAt: hoursFromNow(271) },
+    body: { name: "Xoa duoc", serviceType: "yoga", format: "1:8", coachId: trainers[0].id, startAt: hoursFromNow(270), endAt: hoursFromNow(271) },
   });
   assert.equal((await call(`/schedule/classes/${freeCls.data.class._id}`, { method: "DELETE", token: tokens.reception })).status, 200);
 
   const bookedCls = await call("/schedule/classes", {
     method: "POST", token: tokens.reception,
-    body: { name: "Khong xoa duoc", serviceType: "yoga", coachId: trainers[0].id, startAt: hoursFromNow(272), endAt: hoursFromNow(273) },
+    body: { name: "Khong xoa duoc", serviceType: "yoga", format: "1:8", coachId: trainers[0].id, startAt: hoursFromNow(272), endAt: hoursFromNow(273) },
   });
-  const bk = await call("/bookings", { method: "POST", token: vy.token, body: { type: "group", classId: bookedCls.data.class._id } });
+  const bk = await call("/bookings", { method: "POST", token: vy.token, body: { classId: bookedCls.data.class._id } });
   assert.equal(bk.status, 201, JSON.stringify(bk.data));
   const del = await call(`/schedule/classes/${bookedCls.data.class._id}`, { method: "DELETE", token: tokens.reception });
   assert.equal(del.status, 400);
   await call(`/bookings/${bk.data.booking.id}`, { method: "DELETE", token: vy.token });
 
-  const freeSlot = await call("/schedule/pt-slots", {
+  // Buổi 1:1 (thay cho khung PT cũ): Thảo Vy có gói Boxing 1:1 trong seed
+  const free11 = await call("/schedule/classes", {
     method: "POST", token: tokens.reception,
-    body: { trainerId: trainers[0].id, startAt: hoursFromNow(274), endAt: hoursFromNow(275) },
+    body: { name: "1:1 xoa duoc", serviceType: "boxing", format: "1:1", coachId: trainers[0].id, startAt: hoursFromNow(274), endAt: hoursFromNow(275) },
   });
-  assert.equal((await call(`/schedule/pt-slots/${freeSlot.data.slot._id}`, { method: "DELETE", token: tokens.reception })).status, 200);
+  assert.equal((await call(`/schedule/classes/${free11.data.class._id}`, { method: "DELETE", token: tokens.reception })).status, 200);
 
-  const bookedSlot = await call("/schedule/pt-slots", {
+  const booked11 = await call("/schedule/classes", {
     method: "POST", token: tokens.reception,
-    body: { trainerId: trainers[0].id, startAt: hoursFromNow(276), endAt: hoursFromNow(277) },
+    body: { name: "1:1 khong xoa duoc", serviceType: "boxing", format: "1:1", coachId: trainers[0].id, startAt: hoursFromNow(276), endAt: hoursFromNow(277) },
   });
-  // H7: đặt PT cần gói loại pt — Thảo Vy seed chỉ có yoga/gym
-  const vyId = (await User.findOne({ phone: "0912345678" }))._id;
-  await Package.create({
-    userId: vyId, name: "PT test B12", serviceType: "pt", price: 1,
-    totalSessions: 5, activatedAt: new Date(), expiresAt: null,
-  });
-  const bkPt = await call("/bookings", { method: "POST", token: vy.token, body: { type: "pt", slotId: bookedSlot.data.slot._id } });
-  assert.equal(bkPt.status, 201, JSON.stringify(bkPt.data));
-  assert.equal((await call(`/schedule/pt-slots/${bookedSlot.data.slot._id}`, { method: "DELETE", token: tokens.reception })).status, 400);
-  await call(`/bookings/${bkPt.data.booking.id}`, { method: "DELETE", token: vy.token });
+  const bk11 = await call("/bookings", { method: "POST", token: vy.token, body: { classId: booked11.data.class._id } });
+  assert.equal(bk11.status, 201, JSON.stringify(bk11.data));
+  assert.equal((await call(`/schedule/classes/${booked11.data.class._id}`, { method: "DELETE", token: tokens.reception })).status, 400);
+  await call(`/bookings/${bk11.data.booking.id}`, { method: "DELETE", token: vy.token });
 });
 
 test("B13+B14: đổi tên tài khoản HLV đồng bộ Trainer.name; SĐT trùng -> 409", async () => {
@@ -328,43 +364,43 @@ test("B13+B14: đổi tên tài khoản HLV đồng bộ Trainer.name; SĐT trù
 
 // ================= PHẦN C — CÁC FIX SAU VÒNG AUDIT TOÀN DỰ ÁN =================
 
-test("C1: MỘT HLV không thể bị xếp 2 lịch trùng giờ (lớp đè lớp, PT đè lớp, PATCH dời vào giờ bận)", async () => {
+test("C1: MỘT HLV không thể bị xếp 2 lịch trùng giờ (lớp đè lớp, buổi 1:1 đè lớp, PATCH dời vào giờ bận)", async () => {
   const trainers = (await call("/schedule/trainers", { token: tokens.reception })).data.trainers;
   const coach = trainers[0];
 
   const first = await call("/schedule/classes", {
     method: "POST", token: tokens.reception,
-    body: { name: "Goc lich", serviceType: "pilates", coachId: coach.id, startAt: hoursFromNow(300), endAt: hoursFromNow(301) },
+    body: { name: "Goc lich", serviceType: "pilates", format: "1:4", coachId: coach.id, startAt: hoursFromNow(300), endAt: hoursFromNow(301) },
   });
   assert.equal(first.status, 201, JSON.stringify(first.data));
 
   // Lớp thứ hai đè giờ cùng HLV -> 400
   const dupClass = await call("/schedule/classes", {
     method: "POST", token: tokens.reception,
-    body: { name: "De len", serviceType: "pilates", coachId: coach.id, startAt: hoursFromNow(300.5), endAt: hoursFromNow(301.5) },
+    body: { name: "De len", serviceType: "pilates", format: "1:4", coachId: coach.id, startAt: hoursFromNow(300.5), endAt: hoursFromNow(301.5) },
   });
   assert.equal(dupClass.status, 400);
   assert.match(dupClass.data.error, /trùng giờ/);
 
-  // PT slot đè lên lớp cùng HLV -> 400
-  const dupSlot = await call("/schedule/pt-slots", {
+  // Buổi 1:1 (thay khung PT cũ) đè lên lớp cùng HLV -> 400
+  const dup11 = await call("/schedule/classes", {
     method: "POST", token: tokens.reception,
-    body: { trainerId: coach.id, startAt: hoursFromNow(300), endAt: hoursFromNow(301) },
+    body: { name: "1:1 de len", serviceType: "pilates", format: "1:1", coachId: coach.id, startAt: hoursFromNow(300), endAt: hoursFromNow(301) },
   });
-  assert.equal(dupSlot.status, 400);
-  assert.match(dupSlot.data.error, /trùng giờ/);
+  assert.equal(dup11.status, 400);
+  assert.match(dup11.data.error, /trùng giờ/);
 
   // HLV khác cùng khung giờ thì vẫn được
   const other = await call("/schedule/classes", {
     method: "POST", token: tokens.reception,
-    body: { name: "HLV khac cung gio", serviceType: "pilates", coachId: trainers[1].id, startAt: hoursFromNow(300), endAt: hoursFromNow(301) },
+    body: { name: "HLV khac cung gio", serviceType: "pilates", format: "1:4", coachId: trainers[1].id, startAt: hoursFromNow(300), endAt: hoursFromNow(301) },
   });
   assert.equal(other.status, 201, JSON.stringify(other.data));
 
   // PATCH dời lớp trống vào giờ bận của chính HLV -> 400
   const free = await call("/schedule/classes", {
     method: "POST", token: tokens.reception,
-    body: { name: "Sap bi doi", serviceType: "pilates", coachId: coach.id, startAt: hoursFromNow(305), endAt: hoursFromNow(306) },
+    body: { name: "Sap bi doi", serviceType: "pilates", format: "1:4", coachId: coach.id, startAt: hoursFromNow(305), endAt: hoursFromNow(306) },
   });
   const moved = await call(`/schedule/classes/${free.data.class._id}`, {
     method: "PATCH", token: tokens.reception,
@@ -379,15 +415,15 @@ test("C2: gói còn hạn hôm nay nhưng HẾT HẠN TRƯỚC NGÀY buổi tậ
   const userId = (await User.findOne({ phone: "0912345678" }))._id;
   const cls = await call("/schedule/classes", {
     method: "POST", token: tokens.reception,
-    body: { name: "Sau khi goi het han", serviceType: "yoga", coachId: (await call("/schedule/trainers", { token: tokens.reception })).data.trainers[1].id, startAt: hoursFromNow(310), endAt: hoursFromNow(311) },
+    body: { name: "Sau khi goi het han", serviceType: "yoga", format: "1:8", coachId: (await call("/schedule/trainers", { token: tokens.reception })).data.trainers[1].id, startAt: hoursFromNow(310), endAt: hoursFromNow(311) },
   });
   // Gói còn hạn 24h nữa (còn hiệu lực HÔM NAY) nhưng lớp ở giờ +310h
   await Package.updateMany({ userId }, { $set: { expiresAt: hoursFromNow(24) } });
-  const r = await call("/bookings", { method: "POST", token: vy.token, body: { type: "group", classId: cls.data.class._id } });
+  const r = await call("/bookings", { method: "POST", token: vy.token, body: { classId: cls.data.class._id } });
   assert.equal(r.status, 400);
   assert.match(r.data.error, /hết hạn trước ngày diễn ra/);
-  const yogaPkg = await Package.findOne({ userId, serviceType: "yoga" });
-  assert.equal(yogaPkg.usedSessions <= yogaPkg.totalSessions, true);
+  const yogaPkg = await Package.findOne({ userId, serviceTypes: "yoga" });
+  assert.equal(yogaPkg.totalSessions == null || yogaPkg.usedSessions <= yogaPkg.totalSessions, true);
   await Package.updateMany({ userId }, { $set: { expiresAt: hoursFromNow(24 * 30) } });
 });
 
@@ -414,8 +450,14 @@ test("C3: đầu vào quái — phone dạng mảng, body không phải JSON -> 
 test("C4: buổi ĐANG diễn ra vẫn hiện ở 'lịch sắp tới', không rơi vào lịch sử trước khi kết thúc", async () => {
   const userId = (await User.findOne({ phone: "0909090909" }))._id;
   const trainerDoc = await mongoose.connection.db.collection("trainers").findOne({});
+  // her-35: booking bắt buộc có classId + snapshot bộ môn/loại hình
+  const cls = await GymClass.create({
+    name: "Dang dien ra", serviceType: "pilates", format: "1:1", coachId: trainerDoc._id,
+    startAt: hoursFromNow(-0.5), endAt: hoursFromNow(0.5), capacity: 1, bookedCount: 1,
+  });
   const inProgress = await Booking.create({
-    userId, type: "group", trainerId: trainerDoc._id, title: "Dang dien ra",
+    userId, classId: cls._id, trainerId: trainerDoc._id, title: "Dang dien ra",
+    serviceType: "pilates", format: "1:1",
     startAt: hoursFromNow(-0.5), endAt: hoursFromNow(0.5), status: "booked",
   });
   try {
@@ -426,6 +468,7 @@ test("C4: buổi ĐANG diễn ra vẫn hiện ở 'lịch sắp tới', không r
     assert.ok(!his.data.bookings.some((b) => b.title === "Dang dien ra"), "chưa kết thúc thì chưa vào lịch sử");
   } finally {
     await Booking.deleteOne({ _id: inProgress._id });
+    await GymClass.deleteOne({ _id: cls._id });
   }
 });
 
@@ -462,13 +505,14 @@ test("B15: SĐT khách ẩn với HLV ở /management/bookings; reception/admin 
   const customer = await User.findOne({ phone: "0909090909" });
   // Lớp + booking riêng cho test (giờ xa tương lai để không đụng dữ liệu seed)
   const cls = await GymClass.create({
-    name: "Lop test SDT", coachId: linhId, capacity: 5, bookedCount: 1,
-    serviceType: "pilates",
+    name: "Lop test SDT", coachId: linhId, capacity: 4, bookedCount: 1,
+    serviceType: "pilates", format: "1:4",
     startAt: hoursFromNow(200), endAt: hoursFromNow(201),
   });
   const bk = await Booking.create({
-    userId: customer._id, type: "group", classId: cls._id, trainerId: linhId,
-    title: "Lop test SDT", startAt: cls.startAt, endAt: cls.endAt, status: "booked",
+    userId: customer._id, classId: cls._id, trainerId: linhId,
+    title: "Lop test SDT", serviceType: "pilates", format: "1:4",
+    startAt: cls.startAt, endAt: cls.endAt, status: "booked",
   });
   try {
     for (const [role, seesPhone] of [["trainer", false], ["reception", true], ["admin", true]]) {
@@ -493,13 +537,14 @@ test("B16: SĐT khách ẩn với HLV ở roster lớp mình; reception vẫn th
   const linhId = (await User.findOne({ phone: "0911111111" })).trainerId;
   const customer = await User.findOne({ phone: "0909090909" });
   const cls = await GymClass.create({
-    name: "Lop test SDT roster", coachId: linhId, capacity: 5, bookedCount: 1,
-    serviceType: "pilates",
+    name: "Lop test SDT roster", coachId: linhId, capacity: 4, bookedCount: 1,
+    serviceType: "pilates", format: "1:4",
     startAt: hoursFromNow(210), endAt: hoursFromNow(211),
   });
   const bk = await Booking.create({
-    userId: customer._id, type: "group", classId: cls._id, trainerId: linhId,
-    title: "Lop test SDT roster", startAt: cls.startAt, endAt: cls.endAt, status: "booked",
+    userId: customer._id, classId: cls._id, trainerId: linhId,
+    title: "Lop test SDT roster", serviceType: "pilates", format: "1:4",
+    startAt: cls.startAt, endAt: cls.endAt, status: "booked",
   });
   try {
     const asTrainer = await call(`/management/classes/${cls._id}/roster`, { token: tokens.trainer });
@@ -521,13 +566,14 @@ test("B17: HLV không dò được SĐT khách qua ?search= (chỉ tìm theo tê
   const linhId = (await User.findOne({ phone: "0911111111" })).trainerId;
   const customer = await User.findOne({ phone: "0909090909" });
   const cls = await GymClass.create({
-    name: "Lop test search SDT", coachId: linhId, capacity: 5, bookedCount: 1,
-    serviceType: "pilates",
+    name: "Lop test search SDT", coachId: linhId, capacity: 4, bookedCount: 1,
+    serviceType: "pilates", format: "1:4",
     startAt: hoursFromNow(220), endAt: hoursFromNow(221),
   });
   const bk = await Booking.create({
-    userId: customer._id, type: "group", classId: cls._id, trainerId: linhId,
-    title: "Lop test search SDT", startAt: cls.startAt, endAt: cls.endAt, status: "booked",
+    userId: customer._id, classId: cls._id, trainerId: linhId,
+    title: "Lop test search SDT", serviceType: "pilates", format: "1:4",
+    startAt: cls.startAt, endAt: cls.endAt, status: "booked",
   });
   const has = (r) => r.data.bookings.some((b) => b.title === "Lop test search SDT");
   try {

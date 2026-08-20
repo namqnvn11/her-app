@@ -10,6 +10,7 @@ import AutoScheduleScreen from "./AutoScheduleScreen";
 import FormSheet from "../components/FormSheet";
 import { useAuth } from "../context/AuthContext";
 import { api } from "../api/client";
+import { packageLabel } from "../utils/formats";
 import { useTheme } from "../theme";
 
 const ROLE_LABEL = { admin: "Admin", reception: "Lễ tân", trainer: "Huấn luyện viên", customer: "Khách hàng" };
@@ -26,6 +27,8 @@ export default function ProfileScreen() {
   const [name, setName] = useState(user?.name || "");
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
+  // Review her-34 #4: message dùng cho cả lỗi — lỗi phải ra màu đỏ, không phải xanh thành công
+  const [messageErr, setMessageErr] = useState(false);
   const [editing, setEditing] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [autoOpen, setAutoOpen] = useState(false); // her-32: màn Lịch tự động (quầy)
@@ -33,6 +36,8 @@ export default function ProfileScreen() {
   const [pkgs, setPkgs] = useState([]);
   const [pkgError, setPkgError] = useState("");
   // Admin kiêm HLV (mục 6, chốt 16/08): bật 1 lần → có hồ sơ HLV, khách đặt được
+  // her-34: đã bật thì bấm vào dòng "Hồ sơ HLV" để SỬA lại tên hiển thị + chuyên môn
+  const [trainerMode, setTrainerMode] = useState("create"); // "create" | "edit"
   const [trainerSheet, setTrainerSheet] = useState(false);
   const [trainerForm, setTrainerForm] = useState({ name: "", specialties: [] });
   const [disciplineOpts, setDisciplineOpts] = useState([]);
@@ -69,22 +74,41 @@ export default function ProfileScreen() {
     .join("")
     .toUpperCase();
 
-  const openTrainerProfile = async () => {
+  const saveTrainerProfile = async () => {
     if (trainerBusy) return;
     if (!trainerForm.name.trim()) return setTrainerError("Nhập tên hiển thị của HLV");
     setTrainerError("");
     setTrainerBusy(true);
     try {
-      await api.post("/me/trainer-profile", {
-        name: trainerForm.name.trim(),
-        specialties: trainerForm.specialties,
-      });
+      const body = { name: trainerForm.name.trim(), specialties: trainerForm.specialties };
+      if (trainerMode === "edit") await api.patch("/me/trainer-profile", body);
+      else await api.post("/me/trainer-profile", body);
       await refreshMe(); // user.trainerId có ngay — nút tự đổi sang "đã bật"
       setTrainerSheet(false);
-      setMessage("Đã mở hồ sơ HLV — bạn đã xuất hiện trong danh sách HLV");
+      setMessageErr(false);
+      setMessage(trainerMode === "edit" ? "Đã cập nhật hồ sơ HLV" : "Đã mở hồ sơ HLV — bạn đã xuất hiện trong danh sách HLV");
       setTimeout(() => setMessage(""), 3500);
     } catch (err) {
       setTrainerError(err.message); // hiện trong sheet (L8)
+    } finally {
+      setTrainerBusy(false);
+    }
+  };
+
+  // her-34: điền sẵn hồ sơ đang có rồi mở sheet ở chế độ sửa
+  const openTrainerEdit = async () => {
+    if (trainerBusy) return;
+    setTrainerError("");
+    setTrainerBusy(true);
+    try {
+      const r = await api.get("/me/trainer-profile");
+      setTrainerForm({ name: r.trainer.name, specialties: r.trainer.specialties || [] });
+      setTrainerMode("edit");
+      setTrainerSheet(true);
+    } catch (err) {
+      setMessageErr(true);
+      setMessage(err.message);
+      setTimeout(() => setMessage(""), 3500);
     } finally {
       setTrainerBusy(false);
     }
@@ -96,9 +120,11 @@ export default function ProfileScreen() {
     try {
       await api.patch("/me", { name });
       await refreshMe();
+      setMessageErr(false);
       setMessage("Đã lưu thay đổi");
       setEditing(false);
     } catch (err) {
+      setMessageErr(true);
       setMessage(err.message);
     } finally {
       setSaving(false);
@@ -135,6 +161,10 @@ export default function ProfileScreen() {
                 >
                   <View style={{ flex: 1 }}>
                     <Text style={[styles.rowTitle, { color: p.status === "active" ? c.ink : c.inkSoft }]}>{p.name}</Text>
+                    {/* her-35: bộ môn + loại hình — 2 gói mix khác nhau nhìn là biết */}
+                    {!!packageLabel(p) && (
+                      <Text style={[styles.pkgSub, { color: c.inkSoft }]}>{packageLabel(p)}</Text>
+                    )}
                     <Text style={[styles.pkgSub, { color: c.inkSoft }]}>
                       {p.totalSessions == null ? "không giới hạn buổi" : `còn ${p.remainingSessions} buổi`}
                       {" · "}
@@ -194,18 +224,23 @@ export default function ProfileScreen() {
                 <Feather name="chevron-right" size={16} color={c.inkSoft} />
               </TouchableOpacity>
             )}
-            {/* Admin kiêm HLV: bật 1 lần; đã bật thì hiện trạng thái (không có đường gỡ — hỏi quầy/dev) */}
+            {/* Admin kiêm HLV: bật 1 lần (không có đường gỡ — hỏi quầy/dev);
+                đã bật thì bấm vào để sửa tên hiển thị + chuyên môn (her-34) */}
             {user?.role === "admin" &&
               (user?.trainerId ? (
-                <View style={[styles.row, { borderBottomColor: c.hairline }]}>
+                <TouchableOpacity onPress={openTrainerEdit} style={[styles.row, { borderBottomColor: c.hairline }]}>
                   <Text style={[styles.rowTitle, { color: c.ink }]}>Hồ sơ HLV</Text>
-                  <Text style={{ fontSize: 12, fontWeight: "800", color: c.success }}>Đã bật</Text>
-                </View>
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                    <Text style={{ fontSize: 12, fontWeight: "800", color: c.success }}>Đã bật</Text>
+                    <Feather name="chevron-right" size={16} color={c.inkSoft} />
+                  </View>
+                </TouchableOpacity>
               ) : (
                 <TouchableOpacity
                   onPress={() => {
                     setTrainerForm({ name: user?.name || "", specialties: [] });
                     setTrainerError("");
+                    setTrainerMode("create");
                     setTrainerSheet(true);
                   }}
                   style={[styles.row, { borderBottomColor: c.hairline }]}
@@ -220,7 +255,7 @@ export default function ProfileScreen() {
                 </TouchableOpacity>
               ))}
             {/* Thông báo "Đã lưu thay đổi" hiện sau khi form đóng — không thì lưu xong im lặng */}
-            {!!message && <Text style={{ fontSize: 12, color: c.success, marginTop: 10 }}>{message}</Text>}
+            {!!message && <Text style={{ fontSize: 12, color: messageErr ? c.danger : c.success, marginTop: 10 }}>{message}</Text>}
           </>
         )}
 
@@ -233,7 +268,11 @@ export default function ProfileScreen() {
         </AppButton>
       </View>
 
-      <FormSheet visible={trainerSheet} title="Mở hồ sơ HLV" onClose={() => { if (!trainerBusy) setTrainerSheet(false); }}>
+      <FormSheet
+        visible={trainerSheet}
+        title={trainerMode === "edit" ? "Hồ sơ HLV" : "Mở hồ sơ HLV"}
+        onClose={() => { if (!trainerBusy) setTrainerSheet(false); }}
+      >
         <SectionLabel style={{ marginTop: 12 }}>Tên hiển thị</SectionLabel>
         <TextInput
           value={trainerForm.name}
@@ -244,7 +283,14 @@ export default function ProfileScreen() {
         />
         <SectionLabel style={{ marginTop: 12 }}>Chuyên môn (chọn từ danh mục)</SectionLabel>
         <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 8 }}>
-          {disciplineOpts.map(([key, label]) => {
+          {/* Review her-34 #3: key đã chọn nhưng không còn trong danh mục vẫn phải hiện chip
+              (bỏ chọn được) — không thì form kẹt 400 mãi mà không thấy môn nào sai */}
+          {[
+            ...disciplineOpts,
+            ...trainerForm.specialties
+              .filter((k) => !disciplineOpts.some(([key]) => key === k))
+              .map((k) => [k, k]),
+          ].map(([key, label]) => {
             const on = trainerForm.specialties.includes(key);
             return (
               <TouchableOpacity
@@ -265,8 +311,8 @@ export default function ProfileScreen() {
           })}
         </View>
         {!!trainerError && <Text style={{ fontSize: 12.5, fontWeight: "700", marginTop: 14, color: c.danger }}>{trainerError}</Text>}
-        <AppButton style={{ marginTop: 22 }} disabled={trainerBusy} onPress={openTrainerProfile}>
-          {trainerBusy ? "Đang mở..." : "Mở hồ sơ HLV"}
+        <AppButton style={{ marginTop: 22 }} disabled={trainerBusy} onPress={saveTrainerProfile}>
+          {trainerBusy ? "Đang lưu..." : trainerMode === "edit" ? "Lưu thay đổi" : "Mở hồ sơ HLV"}
         </AppButton>
       </FormSheet>
 

@@ -21,8 +21,12 @@ const Tab = createBottomTabNavigator();
 // Thanh tab theo bản thiết kế 13 màn: CHỮ, không icon — tab đang chọn nằm trong chip màu nhạt
 function TextTabBar({ state, descriptors, navigation }) {
   const insets = useSafeAreaInsets();
+  // 5 tab (admin kiêm HLV) thì thu chữ/đệm lại một nấc để không tràn màn hẹp
+  const compact = state.routes.length >= 5;
   return (
-    <View style={[styles.tabBar, { paddingBottom: Math.max(insets.bottom, 10) }]}>
+    // Nội dung căn GIỮA vùng cao cố định; vùng an toàn (vạch home) chỉ đắp thêm phía dưới —
+    // không làm chip lệch khỏi giữa nữa (góp ý 18/08 lượt 3)
+    <View style={[styles.tabBar, { height: 58 + insets.bottom, paddingBottom: insets.bottom }]}>
       {state.routes.map((route, index) => {
         const { options } = descriptors[route.key];
         const label = options.title ?? route.name;
@@ -36,9 +40,13 @@ function TextTabBar({ state, descriptors, navigation }) {
               if (!focused && !event.defaultPrevented) navigation.navigate(route.name);
             }}
             style={styles.tabItem}
+            hitSlop={{ top: 6, bottom: 6 }}
           >
-            <View style={[styles.tabChip, focused && { backgroundColor: COLORS.primaryTint }]}>
-              <Text numberOfLines={1} style={[styles.tabLabel, { color: focused ? COLORS.primary : COLORS.tabInactive }]}>
+            <View style={[styles.tabChip, compact && { paddingHorizontal: 8 }, focused && { backgroundColor: COLORS.primaryTint }]}>
+              <Text
+                numberOfLines={1}
+                style={[styles.tabLabel, compact && { fontSize: 12.5 }, { color: focused ? COLORS.primary : COLORS.tabInactive }]}
+              >
                 {label}
               </Text>
             </View>
@@ -151,10 +159,13 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.card,
     borderTopWidth: 1,
     borderTopColor: COLORS.hairline,
-    paddingTop: 10,
+    // Chiều cao đặt inline = 58 + vùng an toàn (height RN tính cả padding) — vùng nội dung
+    // luôn đúng 58 và chip nằm chính giữa, không đệm trên/dưới lệch nhau
     paddingHorizontal: 6,
   },
-  tabItem: { flexShrink: 1, alignItems: "center" },
-  tabChip: { paddingVertical: 6, paddingHorizontal: 10, borderRadius: 999 },
-  tabLabel: { fontSize: 11, fontWeight: "700" },
+  // flex:1 = 5 tab chia đều bề ngang, tab cuối không dí sát mép phải (góp ý 18/08)
+  tabItem: { flex: 1, alignItems: "center", justifyContent: "center" },
+  // Tab to hơn cho dễ bấm — chữ to theo chiều cao thanh, không chỉ cao lên (góp ý 18/08)
+  tabChip: { paddingVertical: 9, paddingHorizontal: 12, borderRadius: 999 },
+  tabLabel: { fontSize: 13.5, fontWeight: "700" },
 });

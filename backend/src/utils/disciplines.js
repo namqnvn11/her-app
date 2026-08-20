@@ -16,19 +16,17 @@ function clearDisciplineCache() {
   cache = { at: 0, list: [] };
 }
 
-// Bộ môn hợp lệ cho LỚP NHÓM (không gồm "pt")
+// Bộ môn hợp lệ trong danh mục (dùng chung cho lớp nhóm và loại gói)
 async function isValidClassType(key) {
   return (await allDisciplines()).some((d) => d.key === key);
 }
 
-// Loại gói hợp lệ = bộ môn bất kỳ + "pt" (gói PT là loại cố định — Q1 12/08)
+// her-35: loại gói = bộ môn trong danh mục, không còn loại "pt"
 async function isValidPackageType(key) {
-  if (key === "pt") return true;
   return isValidClassType(key);
 }
 
 async function labelOf(key) {
-  if (key === "pt") return "PT";
   const d = (await allDisciplines()).find((x) => x.key === key);
   return d ? d.label : key;
 }
@@ -39,9 +37,8 @@ async function classTypeKeys() {
 
 // Bản SYNC cho chỗ serialize không async được — đọc cache hiện có (server prewarm lúc boot);
 // chưa có trong cache thì fallback nhãn quen thuộc rồi tới chính key.
-const FALLBACK_LABELS = { gym: "Gym", pilates: "Pilates", yoga: "Yoga", pt: "PT" };
+const FALLBACK_LABELS = { gym: "Gym", boxing: "Boxing", stretching: "Stretching", pilates: "Pilates", yoga: "Yoga" };
 function labelOfSync(key) {
-  if (key === "pt") return "PT";
   const d = cache.list.find((x) => x.key === key);
   return d ? d.label : FALLBACK_LABELS[key] || key;
 }

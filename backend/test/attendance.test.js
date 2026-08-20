@@ -87,18 +87,20 @@ async function makeBooking({ trainerId = linhTrainerId, startInMinutes = -10, st
   const cls = await GymClass.create({
     name: `Lop diem danh ${seq++}`,
     serviceType: "pilates",
+    format: "1:4", // her-35: sức chứa cố định theo loại hình
     coachId: trainerId,
     startAt: start,
     endAt: end,
-    capacity: 8,
+    capacity: 4,
     bookedCount: 1,
   });
   const bk = await Booking.create({
     userId: customer._id,
-    type: "group",
     classId: cls._id,
     trainerId,
     title: cls.name,
+    serviceType: cls.serviceType,
+    format: cls.format,
     startAt: start,
     endAt: end,
     status,
@@ -227,6 +229,18 @@ test("hien-thi: /management/bookings + roster vẫn hiện buổi đã điểm d
   assert.equal(row.status, "completed");
   assert.ok(!list.data.bookings.some((b) => String(b.id) === String(bkCancelled._id)), "buổi hủy không hiện");
 
+  // her-40: danh sách phải trả DẤU điểm danh thật — app dựa vào đây để đếm "n đến"
+  assert.ok(row.attendanceAt, "/management/bookings phải trả attendanceAt của buổi đã điểm danh");
+
+  // Buổi bị sweep tự hoàn tất: status completed nhưng CHƯA điểm danh -> attendanceAt null
+  const { bk: bkSwept } = await makeBooking({ startInMinutes: -120 });
+  const { sweepCompletedBookings } = require("../src/utils/completeSweep");
+  await sweepCompletedBookings();
+  const list2 = await call("/management/bookings?range=today", { token: tokens.staff });
+  const sweptRow = list2.data.bookings.find((b) => String(b.id) === String(bkSwept._id));
+  assert.equal(sweptRow.status, "completed");
+  assert.equal(sweptRow.attendanceAt, null, "buổi sweep tự hoàn tất KHÔNG được mang dấu điểm danh");
+
   const roster = await call(`/management/classes/${cls._id}/roster`, { token: tokens.staff });
   assert.equal(roster.status, 200);
   const kh = roster.data.customers.find((k) => String(k.bookingId) === String(bk._id));
@@ -244,7 +258,7 @@ test("review-fix (#2): điểm danh SỚM xong khách KHÔNG đặt lại đư�
 
   // Đặt lại đúng lớp đó -> phải bị chặn "đã đặt" dù booking cũ đã completed
   const again = await call("/bookings", {
-    method: "POST", token: tokens.customer, body: { type: "group", classId: cls._id.toString() },
+    method: "POST", token: tokens.customer, body: { classId: cls._id.toString() },
   });
   assert.equal(again.status, 400, JSON.stringify(again.data));
   assert.match(again.data.error, /đã đặt/);
@@ -253,11 +267,11 @@ test("review-fix (#2): điểm danh SỚM xong khách KHÔNG đặt lại đư�
   const trainerDocs = await mongoose.connection.db.collection("trainers").find({}).toArray();
   const other = trainerDocs.find((t) => t._id.toString() !== linhTrainerId.toString());
   const cls2 = await GymClass.create({
-    name: "Lop chong gio diem danh som", serviceType: "pilates", coachId: other._id,
-    startAt: bk.startAt, endAt: bk.endAt, capacity: 8, bookedCount: 0,
+    name: "Lop chong gio diem danh som", serviceType: "pilates", format: "1:4", coachId: other._id,
+    startAt: bk.startAt, endAt: bk.endAt, capacity: 4, bookedCount: 0,
   });
   const overlap = await call("/bookings", {
-    method: "POST", token: tokens.customer, body: { type: "group", classId: cls2._id.toString() },
+    method: "POST", token: tokens.customer, body: { classId: cls2._id.toString() },
   });
   assert.equal(overlap.status, 400);
   assert.match(overlap.data.error, /trùng giờ/);

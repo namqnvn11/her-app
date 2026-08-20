@@ -13,6 +13,14 @@ import MoneyInput from "../components/MoneyInput";
 import { api } from "../api/client";
 import { useAuth } from "../context/AuthContext";
 import { useTheme } from "../theme";
+import { FORMATS, FORMAT_RATE_FIELD } from "../utils/formats";
+
+// her-35: hoa hồng tính theo LOẠI HÌNH buổi (1:1/1:2/1:4/1:8) — mỗi mức 1 số tiền +
+// cách tính (theo buổi / theo khách). Tên field khớp TrainerRate của server.
+const EMPTY_PAY_FORM = {
+  baseSalary: "0",
+  ...Object.fromEntries(FORMATS.flatMap((f) => [[`${FORMAT_RATE_FIELD[f]}Amount`, "0"], [`${FORMAT_RATE_FIELD[f]}Per`, "session"]])),
+};
 
 // Vai trò mà mỗi tầng được phép tạo — khớp với backend (ALLOWED_TO_MANAGE)
 // Admin quản lý được mọi loại tài khoản, gồm cả học viên (quyết định 07/08/2026, L4)
@@ -60,7 +68,7 @@ export default function AccountsScreen() {
   const [pkgCustomer, setPkgCustomer] = useState(null); // mở màn Gói tập của 1 học viên
   // Mục 7: admin thiết lập thù lao HLV — sheet riêng, lưu = tạo BẢN GHI MỨC MỚI (áp từ hôm nay)
   const [paySheet, setPaySheet] = useState(null); // account đang chỉnh
-  const [payForm, setPayForm] = useState({ baseSalary: "0", groupAmount: "0", groupPer: "session", pt1Amount: "0", ptGroupAmount: "0", ptGroupPer: "session" });
+  const [payForm, setPayForm] = useState(EMPTY_PAY_FORM);
   const [payEffective, setPayEffective] = useState(null);
   const [payError, setPayError] = useState("");
 
@@ -127,20 +135,18 @@ export default function AccountsScreen() {
     closeAllSheets();
     setPayError("");
     setPayEffective(null);
-    setPayForm({ baseSalary: "0", groupAmount: "0", groupPer: "session", pt1Amount: "0", ptGroupAmount: "0", ptGroupPer: "session" });
+    setPayForm(EMPTY_PAY_FORM);
     setPaySheet(a);
     try {
       const res = await api.get("/payroll/settings");
       const row = res.trainers.find((t) => String(t.id) === String(a.trainerId));
       if (row?.rate) {
-        setPayForm({
-          baseSalary: String(row.rate.baseSalary),
-          groupAmount: String(row.rate.groupAmount),
-          groupPer: row.rate.groupPer,
-          pt1Amount: String(row.rate.pt1Amount),
-          ptGroupAmount: String(row.rate.ptGroupAmount),
-          ptGroupPer: row.rate.ptGroupPer,
-        });
+        const next = { baseSalary: String(row.rate.baseSalary ?? 0) };
+        for (const f of FORMATS) {
+          next[`${FORMAT_RATE_FIELD[f]}Amount`] = String(row.rate[`${FORMAT_RATE_FIELD[f]}Amount`] ?? 0);
+          next[`${FORMAT_RATE_FIELD[f]}Per`] = row.rate[`${FORMAT_RATE_FIELD[f]}Per`] || "session";
+        }
+        setPayForm(next);
         setPayEffective(row.rate.effectiveFrom);
       }
     } catch (err) {
@@ -153,9 +159,7 @@ export default function AccountsScreen() {
     const nums = {};
     for (const [key, label] of [
       ["baseSalary", "Lương cứng"],
-      ["groupAmount", "Hoa hồng lớp nhóm"],
-      ["pt1Amount", "Hoa hồng PT 1:1"],
-      ["ptGroupAmount", "Hoa hồng PT nhóm"],
+      ...FORMATS.map((f) => [`${FORMAT_RATE_FIELD[f]}Amount`, `Hoa hồng buổi ${f}`]),
     ]) {
       const raw = String(payForm[key] ?? "").trim();
       const n = Number(raw);
@@ -169,8 +173,7 @@ export default function AccountsScreen() {
     try {
       await api.post(`/payroll/settings/${paySheet.trainerId}`, {
         ...nums,
-        groupPer: payForm.groupPer,
-        ptGroupPer: payForm.ptGroupPer,
+        ...Object.fromEntries(FORMATS.map((f) => [`${FORMAT_RATE_FIELD[f]}Per`, payForm[`${FORMAT_RATE_FIELD[f]}Per`]])),
       });
       flash("Đã lưu mức thù lao mới — áp dụng từ bây giờ");
       setPaySheet(null);
@@ -416,7 +419,7 @@ export default function AccountsScreen() {
           setSheetOpen(true);
         }}
       >
-        <Text style={[styles.fabText, { color: c.primary }]}>+ Tài khoản mới</Text>
+        <Feather name="plus" size={24} color={c.primary} />
       </TouchableOpacity>
 
       <FormSheet visible={sheetOpen} title={`Tài khoản ${ROLE_LABEL[role]} mới`} onClose={() => setSheetOpen(false)}>
@@ -510,37 +513,34 @@ export default function AccountsScreen() {
           onChangeValue={(v) => setPayForm((f) => ({ ...f, baseSalary: v }))}
           style={inputStyle}
         />
-        {[
-          ["Lớp nhóm", "groupAmount", "groupPer"],
-          ["PT 1:1", "pt1Amount", null],
-          ["PT nhóm", "ptGroupAmount", "ptGroupPer"],
-        ].map(([label, amountKey, perKey]) => (
-          <View key={amountKey}>
-            <SectionLabel style={styles.sheetLabel}>{`Hoa hồng ${label} (VND)`}</SectionLabel>
-            <View style={{ flexDirection: "row", gap: 14, alignItems: "flex-end" }}>
-              <MoneyInput
-                value={payForm[amountKey]}
-                onChangeValue={(v) => setPayForm((f) => ({ ...f, [amountKey]: v }))}
-                style={[inputStyle, { flex: 1 }]}
-              />
-              {perKey ? (
+        {/* her-35: 4 mức theo loại hình buổi — mỗi mức chọn tính theo buổi hay theo khách */}
+        {FORMATS.map((f) => {
+          const amountKey = `${FORMAT_RATE_FIELD[f]}Amount`;
+          const perKey = `${FORMAT_RATE_FIELD[f]}Per`;
+          return (
+            <View key={f}>
+              <SectionLabel style={styles.sheetLabel}>{`Hoa hồng buổi ${f} (VND)`}</SectionLabel>
+              <View style={{ flexDirection: "row", gap: 14, alignItems: "flex-end" }}>
+                <MoneyInput
+                  value={payForm[amountKey]}
+                  onChangeValue={(v) => setPayForm((s) => ({ ...s, [amountKey]: v }))}
+                  style={[inputStyle, { flex: 1 }]}
+                />
                 <View style={{ flexDirection: "row", gap: 6 }}>
                   {[["session", "Theo buổi"], ["attendee", "Theo khách"]].map(([k, l]) => (
                     <TouchableOpacity
                       key={k}
-                      onPress={() => setPayForm((f) => ({ ...f, [perKey]: k }))}
+                      onPress={() => setPayForm((s) => ({ ...s, [perKey]: k }))}
                       style={[styles.perChip, { borderColor: c.line }, payForm[perKey] === k && { backgroundColor: c.primaryTint, borderColor: c.primaryTint }]}
                     >
                       <Text style={[styles.perChipText, { color: payForm[perKey] === k ? c.primary : c.ink }]}>{l}</Text>
                     </TouchableOpacity>
                   ))}
                 </View>
-              ) : (
-                <Text style={{ fontSize: 11.5, paddingBottom: 10, color: c.inkSoft }}>theo buổi</Text>
-              )}
+              </View>
             </View>
-          </View>
-        ))}
+          );
+        })}
         {!!payError && <Text style={[styles.sheetError, { color: c.danger }]}>{payError}</Text>}
         <AppButton style={{ marginTop: 22 }} disabled={busy} onPress={savePayRates}>
           {busy ? "Đang lưu..." : "Lưu mức thù lao"}
@@ -594,20 +594,22 @@ const styles = StyleSheet.create({
   actionName: { fontSize: 13.5, fontWeight: "800" },
   resetPw: { fontSize: 15, fontWeight: "900", letterSpacing: 1 },
   resetText: { fontSize: 12.5, fontWeight: "700", marginTop: 12, lineHeight: 18 },
+  // FAB chỉ icon "+" — tròn, nhích lên khỏi mép dưới (góp ý 18/08)
   fab: {
     position: "absolute",
     right: 22,
-    bottom: 20,
+    bottom: 34,
+    width: 54,
+    height: 54,
     borderRadius: 999,
-    paddingVertical: 13,
-    paddingHorizontal: 18,
+    alignItems: "center",
+    justifyContent: "center",
     shadowColor: "#000",
     shadowOpacity: 0.14,
     shadowRadius: 10,
     shadowOffset: { width: 0, height: 4 },
     elevation: 5,
   },
-  fabText: { fontSize: 13, fontWeight: "800" },
   perChip: { paddingVertical: 7, paddingHorizontal: 11, borderRadius: 999, borderWidth: 1.5, marginBottom: 6 },
   perChipText: { fontSize: 11.5, fontWeight: "700" },
   sheetLabel: { marginTop: 12 },

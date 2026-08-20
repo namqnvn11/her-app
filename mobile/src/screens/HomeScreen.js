@@ -7,6 +7,8 @@ import SectionLabel from "../components/SectionLabel";
 import { useAuth } from "../context/AuthContext";
 import { api } from "../api/client";
 import { syncReminders } from "../utils/reminders";
+import { classTitle } from "../utils/displayName";
+import { packageLabel } from "../utils/formats";
 import { useTheme } from "../theme";
 
 function fmtDate(d) {
@@ -33,10 +35,9 @@ export default function HomeScreen() {
   const { c } = useTheme();
   const [pkg, setPkg] = useState(null);
   const [bookings, setBookings] = useState([]);
-  // Trạng thái gói theo nhóm cho 2 ô tắt: null = chưa biết (chưa khoá ô — server vẫn là
+  // Trạng thái gói cho ô Đặt lịch: null = chưa biết (chưa khoá ô — server vẫn là
   // chốt chặn thật) | "ok" | "paused" (có gói nhưng đang bảo lưu) | "none"
-  const [ptState, setPtState] = useState(null);
-  const [groupState, setGroupState] = useState(null);
+  const [pkgState, setPkgState] = useState(null);
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState("");
 
@@ -44,26 +45,26 @@ export default function HomeScreen() {
     setLoading(true);
     try {
       setErrorMsg("");
-      const [pkgRes, pkgsRes, bookingsRes] = await Promise.all([
-        api.get("/me/package"),
+      const [pkgsRes, bookingsRes] = await Promise.all([
         api.get("/me/packages"),
         api.get("/me/bookings"),
       ]);
       // Mục 9: đặt lại nhắc-1-tiếng theo lịch mới nhất (no-op trên web)
       syncReminders((bookingsRes.bookings || []).filter((b) => b.status === "booked"));
-      setPkg(pkgRes.package);
-      // her-20: không có gói phù hợp thì ô tắt phải mờ + nói rõ lý do, không lặng lẽ
-      // nhảy sang tab khác gây nhầm lẫn (góp ý 16/08; review N2/N3: phân biệt gói đang
-      // BẢO LƯU với không có gói, và gate CẢ HAI chiều Group/PT)
+      // her-35: mọi buổi tập đều là lớp -> chỉ còn 1 ô Đặt lịch. Không có gói còn hiệu lực
+      // thì ô mờ + nói rõ lý do, phân biệt gói đang BẢO LƯU với không có gói (góp ý 16/08).
       const pkgs = pkgsRes.packages || [];
-      const stateOf = (isPT) => {
-        const mine = pkgs.filter((p) => (p.serviceType === "pt") === isPT);
-        if (mine.some((p) => p.status === "active")) return "ok";
-        if (mine.some((p) => p.status === "paused")) return "paused";
-        return "none";
-      };
-      setPtState(stateOf(true));
-      setGroupState(stateOf(false));
+      // Gói nổi bật của card đầu màn suy thẳng từ /me/packages — bớt 1 request ở màn mở
+      // nhiều nhất. Server đã sort sẵn: active trước (hạn gần lên đầu), rồi bảo lưu; không
+      // có 2 loại này thì coi như chưa có gói (đúng như /me/package cũ trả null).
+      setPkg(pkgs.find((p) => p.status === "active") || pkgs.find((p) => p.status === "paused") || null);
+      setPkgState(
+        pkgs.some((p) => p.status === "active")
+          ? "ok"
+          : pkgs.some((p) => p.status === "paused")
+            ? "paused"
+            : "none"
+      );
       setBookings(bookingsRes.bookings || []);
     } catch (err) {
       setErrorMsg(err.message);
@@ -99,9 +100,14 @@ export default function HomeScreen() {
         progress={pkg && !unlimited && pkg.totalSessions > 0 ? pkg.usedSessions / pkg.totalSessions : undefined}
         footnote={
           pkg
-            ? unlimited
-              ? `${pkg.name} · không giới hạn buổi`
-              : `${pkg.name} · đã dùng ${pkg.usedSessions}/${pkg.totalSessions}`
+            ? [
+                pkg.name,
+                // her-35: bộ môn + loại hình để khách có 2 gói mix phân biệt được
+                packageLabel(pkg),
+                unlimited ? "không giới hạn buổi" : `đã dùng ${pkg.usedSessions}/${pkg.totalSessions}`,
+              ]
+                .filter(Boolean)
+                .join(" · ")
             : undefined
         }
       />
@@ -115,14 +121,10 @@ export default function HomeScreen() {
         )}
         {bookings.slice(0, 3).map((b) => (
           <View key={b.id} style={[styles.row, { borderBottomColor: c.hairline }]}>
-            <View style={[styles.badge, { backgroundColor: c.primaryTint }]}>
-              <Text style={[styles.badgeText, { color: c.primary }]}>{b.type === "pt" ? "PT" : "GR"}</Text>
-            </View>
+            {/* her-38: bỏ badge loại hình — loại hình đã nằm trong dòng đậm */}
             <View style={{ flex: 1 }}>
-              <Text style={[styles.rowTitle, { color: c.ink }]}>{b.title}</Text>
-              <Text style={[styles.rowMeta, { color: c.inkSoft }]}>
-                {b.coach} · {fmtDateTime(b.startAt)}
-              </Text>
+              <Text style={[styles.rowTitle, { color: c.ink }]}>{classTitle(b)}</Text>
+              <Text style={[styles.rowMeta, { color: c.inkSoft }]}>{fmtDateTime(b.startAt)}</Text>
             </View>
             <Feather name="chevron-right" size={16} color={c.inkSoft} />
           </View>
@@ -153,41 +155,21 @@ export default function HomeScreen() {
 
         <View style={styles.quickRow}>
           {(() => {
-            const groupOff = groupState === "none" || groupState === "paused";
-            const ptOff = ptState === "none" || ptState === "paused";
+            const off = pkgState === "none" || pkgState === "paused";
             return (
-              <>
-                <TouchableOpacity
-                  activeOpacity={groupOff ? 1 : 0.85}
-                  disabled={groupOff}
-                  style={[styles.quick, { backgroundColor: c.primary }, groupOff && { opacity: 0.45 }]}
-                  onPress={() => navigation.navigate("Dat_lich", { initialTab: "group" })}
-                >
-                  <Text style={[styles.quickTitle, { color: c.primaryOn }]}>Đặt lớp Group</Text>
-                  <Text style={[styles.quickSub, { color: c.primaryOnSoft }]}>
-                    {groupState === "paused"
-                      ? "Gói đang bảo lưu — ghé quầy"
-                      : groupState === "none" ? "Cần gói bộ môn — ghé quầy" : "Pilates · Yoga · Gym"}
-                  </Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  activeOpacity={ptOff ? 1 : 0.85}
-                  disabled={ptOff}
-                  style={[
-                    styles.quick,
-                    { borderWidth: 1.5, borderColor: c.primary },
-                    ptOff && { opacity: 0.45, borderColor: c.line },
-                  ]}
-                  onPress={() => navigation.navigate("Dat_lich", { initialTab: "pt" })}
-                >
-                  <Text style={[styles.quickTitle, { color: ptOff ? c.inkSoft : c.primary }]}>Đặt PT</Text>
-                  <Text style={[styles.quickSub, { color: c.inkSoft }]}>
-                    {ptState === "paused"
-                      ? "Gói PT đang bảo lưu — ghé quầy"
-                      : ptState === "none" ? "Cần gói PT — ghé quầy" : "Chọn HLV"}
-                  </Text>
-                </TouchableOpacity>
-              </>
+              <TouchableOpacity
+                activeOpacity={off ? 1 : 0.85}
+                disabled={off}
+                style={[styles.quick, { backgroundColor: c.primary }, off && { opacity: 0.45 }]}
+                onPress={() => navigation.navigate("Dat_lich")}
+              >
+                <Text style={[styles.quickTitle, { color: c.primaryOn }]}>Đặt lịch</Text>
+                <Text style={[styles.quickSub, { color: c.primaryOnSoft }]}>
+                  {pkgState === "paused"
+                    ? "Gói đang bảo lưu — ghé quầy"
+                    : pkgState === "none" ? "Cần gói tập — ghé quầy" : "Đặt buổi tập theo gói của bạn"}
+                </Text>
+              </TouchableOpacity>
             );
           })()}
         </View>
@@ -200,8 +182,6 @@ const styles = StyleSheet.create({
   error: { fontSize: 12.5, marginTop: 14, fontWeight: "700" },
   empty: { fontSize: 13, marginTop: 12 },
   row: { flexDirection: "row", alignItems: "center", gap: 14, paddingVertical: 14, borderBottomWidth: 1 },
-  badge: { width: 44, height: 44, borderRadius: 12, alignItems: "center", justifyContent: "center" },
-  badgeText: { fontSize: 12, fontWeight: "800" },
   rowTitle: { fontSize: 13.5, fontWeight: "700" },
   rowMeta: { fontSize: 11.5, marginTop: 2 },
   note: { borderRadius: 12, paddingVertical: 12, paddingHorizontal: 14, marginTop: 16 },

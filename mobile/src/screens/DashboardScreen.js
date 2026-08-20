@@ -11,6 +11,8 @@ import RosterSheet from "../components/RosterSheet";
 import { useAuth } from "../context/AuthContext";
 import { api } from "../api/client";
 import { useTheme } from "../theme";
+import { FORMATS } from "../utils/formats";
+import { classTitle } from "../utils/displayName";
 
 const money = (n) => (n || 0).toLocaleString("vi-VN") + "đ";
 const short = (n) => (n >= 1e6 ? (n / 1e6).toFixed(1).replace(".", ",") + "tr" : (n || 0).toLocaleString("vi-VN"));
@@ -157,7 +159,7 @@ export default function DashboardScreen() {
           eyebrow={`Lễ tân · ${user?.name || ""}`}
           title={`Hôm nay, ${todayLabel}`}
           stats={[
-            { value: data?.classesToday ?? "—", label: "lớp" },
+            { value: data?.classesToday ?? "—", label: "buổi" },
             { value: data?.bookingsToday ?? "—", label: "lượt đặt" },
             { value: data?.freeSlots ?? "—", label: "chỗ trống" },
             { value: data?.unpaid ?? "—", label: "khách nợ" },
@@ -222,17 +224,20 @@ export default function DashboardScreen() {
           </>
         )}
 
-        {!isAdmin && !!payError && <Text style={[styles.error, { color: c.danger }]}>{payError}</Text>}
+        {/* Lỗi tải thù lao phải hiện cho CẢ admin kiêm HLV — không để khối biến mất im lặng (C4) */}
+        {!!payError && <Text style={[styles.error, { color: c.danger }]}>{payError}</Text>}
         {(isTrainer || (isAdmin && user?.trainerId)) && myPay?.entry && (
           <>
             <SectionLabel>{`Thù lao tháng ${new Date().getMonth() + 1}`}</SectionLabel>
             {[
               ["Lương cứng", myPay.entry.baseSalary, null],
-              [`Lớp nhóm · ${myPay.entry.group.count} ${myPay.entry.group.per === "attendee" ? "khách" : "buổi"}`, myPay.entry.group.amount, myPay.entry.group.count],
-              [`PT 1:1 · ${myPay.entry.pt1.count} buổi`, myPay.entry.pt1.amount, myPay.entry.pt1.count],
-              [`PT nhóm · ${myPay.entry.ptGroup.count} ${myPay.entry.ptGroup.per === "attendee" ? "khách" : "buổi"}`, myPay.entry.ptGroup.amount, myPay.entry.ptGroup.count],
+              // her-35: 4 dòng theo loại hình buổi (1:1/1:2/1:4/1:8)
+              ...FORMATS.map((f) => {
+                const row = myPay.entry.byFormat?.[f] || { count: 0, amount: 0, per: "session" };
+                return [`Buổi ${f} · ${row.count} ${row.per === "attendee" ? "khách" : "buổi"}`, row.amount, row.count];
+              }),
             ]
-              .filter(([, amount, count]) => amount > 0 || count > 0 || count === null && amount > 0)
+              .filter(([, amount, count]) => amount > 0 || count > 0)
               .map(([label, amount]) => (
                 <View key={label} style={[styles.payRow, { borderBottomColor: c.hairline }]}>
                   <Text style={[styles.paySub, { color: c.ink }]}>{label}</Text>
@@ -254,22 +259,29 @@ export default function DashboardScreen() {
             <SectionLabel>Buổi kế tiếp</SectionLabel>
             <TimeRow
               time={data.next.time}
-              title={data.next.title}
+              // her-38: dòng đậm thống nhất — buổi này là của chính HLV nên ghép tên mình
+              title={classTitle({ name: data.next.title, format: data.next.format, coach: user?.name })}
               meta={(data.next.customers || []).join(", ")}
               last
             >
-              {/* Mục 8: nối nút với RosterSheet của mục 5 — chỉ buổi LỚP NHÓM có danh sách khách */}
+              {/* Mục 8: nối nút với RosterSheet của mục 5 — mọi buổi đều là lớp (her-35) */}
               {data.next.classId ? (
                 <AppButton onPress={() => setRosterClassId(data.next.classId)}>Điểm danh lớp</AppButton>
               ) : (
-                <Text style={{ fontSize: 11.5, color: c.inkSoft }}>Buổi PT — điểm danh ở màn Lịch dạy</Text>
+                <Text style={{ fontSize: 11.5, color: c.inkSoft }}>Điểm danh buổi dạy ở màn Lịch dạy</Text>
               )}
             </TimeRow>
             {(data.rest || []).length > 0 && (
               <>
                 <SectionLabel>Còn lại hôm nay</SectionLabel>
                 {data.rest.map((r, i, arr) => (
-                  <TimeRow key={`${r.time}-${i}`} time={r.time} title={r.title} meta={r.sub} last={i === arr.length - 1} />
+                  <TimeRow
+                    key={`${r.time}-${i}`}
+                    time={r.time}
+                    title={classTitle({ name: r.title, format: r.format, coach: user?.name })}
+                    meta={r.sub}
+                    last={i === arr.length - 1}
+                  />
                 ))}
               </>
             )}
@@ -290,8 +302,8 @@ export default function DashboardScreen() {
               <TimeRow
                 key={`${t.time}-${t.title}-${i}`}
                 time={t.time}
-                title={t.title}
-                meta={t.coach}
+                // her-38: dòng đậm thống nhất — HLV lên dòng đậm nên bỏ khỏi dòng phụ
+                title={classTitle({ name: t.title, format: t.format, coach: t.coach })}
                 last={i === arr.length - 1}
                 right={
                   <Text style={{ fontSize: 12, fontWeight: "700", color: t.booked >= t.capacity ? c.primary : c.ink }}>
@@ -317,6 +329,8 @@ export default function DashboardScreen() {
         )}
       </View>
 
+      {/* Chỉ HLV mở được sheet này ở màn Tổng quan (khối "Buổi kế tiếp") — không truyền
+          canAdd/canCancel: đặt hộ & hủy hộ là quyền của quầy (her-39) */}
       <RosterSheet classId={rosterClassId} onClose={() => setRosterClassId(null)} />
     </ScrollView>
   );
@@ -349,8 +363,6 @@ const styles = StyleSheet.create({
   todo: { flexDirection: "row", alignItems: "center", paddingVertical: 13 },
   note: { borderRadius: 12, paddingVertical: 12, paddingHorizontal: 14, marginTop: 16 },
   noteText: { fontSize: 12, lineHeight: 18, fontWeight: "500" },
-  monthNav: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 10 },
-  monthLabel: { fontSize: 13.5, fontWeight: "800" },
   repMonthRow: { paddingHorizontal: 22, marginTop: 4, flexDirection: "row" },
   repPill: {
     flexDirection: "row",

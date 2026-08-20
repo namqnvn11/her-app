@@ -1,4 +1,6 @@
 // Test her-13 — Mục 8: Báo cáo thu–chi + API /dashboard.
+// Cập nhật her-35 (19/08): mọi buổi là LỚP có loại hình (1:1/1:2/1:4/1:8) — không còn
+// PTSlot; gói tập dùng serviceTypes[] + format; hoa hồng HLV theo 4 mức f11/f12/f14/f18.
 // Xem docs-her/testcase/testcase_her-13_dashboard.md
 // DB riêng her_test_k (tự seed), server cổng 4191.
 
@@ -14,12 +16,12 @@ const URI = "mongodb://localhost:27017/her_test_k";
 const S = "http://localhost:4191/api";
 
 const Booking = require("../src/models/Booking");
-const PTSlot = require("../src/models/PTSlot");
 const GymClass = require("../src/models/GymClass");
 const Trainer = require("../src/models/Trainer");
 const TrainerRate = require("../src/models/TrainerRate");
 const Package = require("../src/models/Package");
 const User = require("../src/models/User");
+const { FORMATS, FORMAT_CAPACITY } = require("../src/utils/formats");
 
 let proc;
 const tokens = {};
@@ -65,32 +67,32 @@ const pastDayThisMonth = (offset, hour) => {
 };
 
 let khachId; // 1 khách dùng chung cho fixture booking
-async function makeAttendedSession({ trainerId, kind = "group", start, attended = 1, noShow = 0, attendanceAtNull = false, status = "completed" } = {}) {
+
+// her-35: 1 "buổi" = 1 LỚP có loại hình; booking mang snapshot serviceType/format.
+// format "1:4" thay cho lớp nhóm cũ, "1:1" thay cho khung PT 1:1 cũ.
+async function makeAttendedSession({
+  trainerId, format = "1:4", serviceType = "pilates", start,
+  attended = 1, noShow = 0, attendanceAtNull = false, status = "completed",
+} = {}) {
   const end = new Date(start.getTime() + 3600 * 1000);
-  let classId = null;
-  let slotId = null;
-  let title;
-  if (kind === "group") {
-    const cls = await GymClass.create({
-      name: `Lop dash ${Math.random().toString(36).slice(2, 7)}`, serviceType: "pilates",
-      coachId: trainerId, startAt: start, endAt: end, capacity: 10, bookedCount: attended + noShow,
-    });
-    classId = cls._id;
-    title = cls.name;
-  } else {
-    const slot = await PTSlot.create({ trainerId, startAt: start, endAt: end, capacity: kind === "ptGroup" ? 5 : 1, bookedCount: attended + noShow });
-    slotId = slot._id;
-    title = kind === "ptGroup" ? "PT nhóm — X" : "1:1 PT — X";
-  }
+  const cls = await GymClass.create({
+    name: `Lop dash ${Math.random().toString(36).slice(2, 7)}`,
+    serviceType, format, coachId: trainerId, startAt: start, endAt: end,
+    capacity: FORMAT_CAPACITY[format], bookedCount: attended + noShow,
+  });
+  const base = {
+    userId: khachId, classId: cls._id, trainerId, title: cls.name,
+    serviceType, format, startAt: start, endAt: end,
+  };
   const docs = [];
   for (let i = 0; i < attended; i++) {
-    docs.push({ userId: khachId, type: kind === "group" ? "group" : "pt", classId, slotId, trainerId, title, startAt: start, endAt: end, status, attendanceAt: attendanceAtNull || status !== "completed" ? null : start });
+    docs.push({ ...base, status, attendanceAt: attendanceAtNull || status !== "completed" ? null : start });
   }
   for (let i = 0; i < noShow; i++) {
-    docs.push({ userId: khachId, type: kind === "group" ? "group" : "pt", classId, slotId, trainerId, title, startAt: start, endAt: end, status: "no_show", attendanceAt: start });
+    docs.push({ ...base, status: "no_show", attendanceAt: start });
   }
   await Booking.insertMany(docs);
-  return { classId, slotId, title };
+  return { classId: cls._id, title: cls.name };
 }
 
 before(async () => {
@@ -121,14 +123,16 @@ before(async () => {
   ducTrainerId = (await Trainer.findOne({ name: /Đức/ }))._id;
   khachId = (await User.findOne({ phone: "0909090909" }))._id;
 
-  // Mức thù lao: Linh PT 100k/buổi; Đức lớp nhóm 50k/khách đến
+  // Mức thù lao (her-35): Linh buổi 1:1 = 100k/buổi; Đức buổi 1:4 = 50k/khách đến
   await TrainerRate.create({
-    trainerId: linhTrainerId, baseSalary: 0, groupAmount: 0, groupPer: "session",
-    pt1Amount: 100000, ptGroupAmount: 0, ptGroupPer: "session", effectiveFrom: new Date(2020, 0, 1),
+    trainerId: linhTrainerId, baseSalary: 0,
+    f11Amount: 100000, f11Per: "session", f12Amount: 0, f14Amount: 0, f18Amount: 0,
+    effectiveFrom: new Date(2020, 0, 1),
   });
   await TrainerRate.create({
-    trainerId: ducTrainerId, baseSalary: 0, groupAmount: 50000, groupPer: "attendee",
-    pt1Amount: 0, ptGroupAmount: 0, ptGroupPer: "session", effectiveFrom: new Date(2020, 0, 1),
+    trainerId: ducTrainerId, baseSalary: 0,
+    f11Amount: 0, f12Amount: 0, f14Amount: 50000, f14Per: "attendee", f18Amount: 0,
+    effectiveFrom: new Date(2020, 0, 1),
   });
 });
 
@@ -171,14 +175,14 @@ test("revenue: tiền ĐÃ THU + nợ + gói bán chạy của THÁNG; gói thá
   const base = (await dash(tokens.admin)).data;
 
   const mkPkg = (name, price, paidAmount) =>
-    Package.create({ userId: khachId, name, serviceType: "yoga", price, paidAmount, totalSessions: 10, activatedAt: new Date(), expiresAt: new Date(Date.now() + 30 * 24 * 3600 * 1000) });
+    Package.create({ userId: khachId, name, serviceTypes: ["yoga", "pilates"], format: "1:1", price, paidAmount, totalSessions: 10, activatedAt: new Date(), expiresAt: new Date(Date.now() + 30 * 24 * 3600 * 1000) });
   await mkPkg("Gói Bán Chạy", 1000000, 1000000);
   await mkPkg("Gói Bán Chạy", 1000000, 1000000);
   await mkPkg("Gói Lẻ", 2000000, 1500000); // nợ 500k
   // Gói THÁNG TRƯỚC (chèn raw để đặt createdAt)
   const lastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 15);
   await mongoose.connection.db.collection("packages").insertOne({
-    userId: khachId, name: "Gói Cũ", serviceType: "gym", price: 9000000, paidAmount: 9000000,
+    userId: khachId, name: "Gói Cũ", serviceTypes: ["gym"], format: "1:1", price: 9000000, paidAmount: 9000000,
     totalSessions: 10, usedSessions: 0, activatedAt: lastMonth, expiresAt: new Date(),
     pausedAt: null, paymentMethod: "cash", createdAt: lastMonth, updatedAt: lastMonth,
   });
@@ -197,13 +201,13 @@ test("peak: sessions đếm lượt ĐẾN thật; peakHours xếp theo giờ đ
   const base = (await dash(tokens.admin)).data;
   assert.equal(base.sessions, 0, "seed không có buổi điểm danh thật nào");
 
-  // 07:00 tổng 4 lượt đến (3 group Đức + 1 PT Linh); 18:00 1 lượt (PT Linh)
-  await makeAttendedSession({ trainerId: ducTrainerId, kind: "group", start: pastDayThisMonth(3, 7), attended: 3, noShow: 1 });
-  await makeAttendedSession({ trainerId: linhTrainerId, kind: "pt1", start: pastDayThisMonth(2, 7), attended: 1 });
-  await makeAttendedSession({ trainerId: linhTrainerId, kind: "pt1", start: pastDayThisMonth(2, 18), attended: 1 });
+  // 07:00 tổng 4 lượt đến (3 khách buổi 1:4 của Đức + 1 buổi 1:1 của Linh); 18:00 1 lượt (1:1 Linh)
+  await makeAttendedSession({ trainerId: ducTrainerId, format: "1:4", serviceType: "gym", start: pastDayThisMonth(3, 7), attended: 3, noShow: 1 });
+  await makeAttendedSession({ trainerId: linhTrainerId, format: "1:1", start: pastDayThisMonth(2, 7), attended: 1 });
+  await makeAttendedSession({ trainerId: linhTrainerId, format: "1:1", start: pastDayThisMonth(2, 18), attended: 1 });
   // Không được tính: sweep (attendanceAt null), hủy
-  await makeAttendedSession({ trainerId: linhTrainerId, kind: "pt1", start: pastDayThisMonth(1, 9), attended: 1, attendanceAtNull: true });
-  await makeAttendedSession({ trainerId: linhTrainerId, kind: "pt1", start: pastDayThisMonth(1, 10), attended: 1, status: "cancelled" });
+  await makeAttendedSession({ trainerId: linhTrainerId, format: "1:1", start: pastDayThisMonth(1, 9), attended: 1, attendanceAtNull: true });
+  await makeAttendedSession({ trainerId: linhTrainerId, format: "1:1", start: pastDayThisMonth(1, 10), attended: 1, status: "cancelled" });
 
   const cur = (await dash(tokens.admin)).data;
   assert.equal(cur.sessions, 5, "3+1+1 lượt đến thật (no_show/sweep/hủy không tính)");
@@ -223,7 +227,7 @@ test("payroll-match: dashboard.payroll = tổng của /payroll/summary; LUÔN t�
   assert.equal((await dash(tokens.admin)).data.payroll, expected);
 
   // BỎ chốt (16/08): thêm buổi mới -> dashboard cập nhật NGAY
-  await makeAttendedSession({ trainerId: linhTrainerId, kind: "pt1", start: pastDayThisMonth(1, 11), attended: 1 });
+  await makeAttendedSession({ trainerId: linhTrainerId, format: "1:1", start: pastDayThisMonth(1, 11), attended: 1 });
   const after = (await dash(tokens.admin)).data.payroll;
   assert.ok(after > expected, "lương luôn tính động theo điểm danh hiện tại");
 });
@@ -235,10 +239,10 @@ test("trainers-table: sessions/attendance/pay từng HLV đúng", async () => {
   const linh = cur.trainers.find((t) => t.name === "HLV Linh");
   const duc = cur.trainers.find((t) => t.name === "HLV Đức");
   assert.ok(linh && duc);
-  assert.equal(duc.sessions, 1, "Đức 1 buổi lớp nhóm");
+  assert.equal(duc.sessions, 1, "Đức 1 buổi 1:4");
   assert.equal(duc.pay, 3 * 50000, "per=attendee: 3 khách đến x 50k");
   assert.ok(Math.abs(duc.attendance - 0.75) < 0.01, "3 đến / (3+1 vắng) = 75%");
-  assert.equal(linh.sessions, 3, "Linh 3 buổi PT có khách đến (2 + 1 thêm ở test chốt)");
+  assert.equal(linh.sessions, 3, "Linh 3 buổi 1:1 có khách đến (2 + 1 thêm ở test chốt)");
   assert.equal(linh.pay, 3 * 100000);
   assert.equal(linh.attendance, 1);
 });
@@ -249,23 +253,25 @@ test("reception: số hôm nay + danh sách lớp + todo (nợ, gói sắp hết
   // Đối chiếu độc lập với DB
   const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const endOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+  // her-35: classesToday nay gồm MỌI buổi trong ngày (cả 1:1/1:2 trước đây là khung PT)
   const clsCount = await GymClass.countDocuments({ startAt: { $gte: startOfDay, $lte: endOfDay } });
 
   // Thêm 1 gói SẮP HẾT HẠN (3 ngày nữa) cho khách mới -> todo phải có dòng gói sắp hết
   const passwordHash = await bcrypt.hash("123456", 10);
   const u = await User.create({ name: "Khach No", phone: "0972111111", passwordHash, role: "customer" });
   await Package.create({
-    userId: u._id, name: "Gói Sắp Hết", serviceType: "gym", price: 500000, paidAmount: 100000, // nợ 400k
+    userId: u._id, name: "Gói Sắp Hết", serviceTypes: ["gym"], format: "1:1", price: 500000, paidAmount: 100000, // nợ 400k
     totalSessions: 10, activatedAt: new Date(), expiresAt: new Date(Date.now() + 3 * 24 * 3600 * 1000),
   });
 
   const rec = (await dash(tokens.staff)).data;
-  assert.equal(rec.classesToday, clsCount, "đếm lớp nhóm hôm nay");
+  assert.equal(rec.classesToday, clsCount, "đếm mọi buổi hôm nay");
   // her-30 (chốt 17/08): Lịch hôm nay CHỈ buổi CÓ KHÁCH, tối đa 4
   assert.ok(rec.today.length <= 4, "tối đa 4 buổi");
   for (const t of rec.today) {
     assert.ok(t.time && t.title && typeof t.booked === "number" && typeof t.capacity === "number");
     assert.ok(t.booked > 0, "chỉ buổi có khách mới được hiển thị");
+    assert.ok(FORMATS.includes(t.format), `mỗi buổi phải kèm loại hình hợp lệ (nhận: ${t.format})`);
   }
   assert.ok(rec.unpaid >= 2, "ít nhất 2 khách nợ (Gói Lẻ + Gói Sắp Hết)");
   assert.ok(typeof rec.bookingsToday === "number" && typeof rec.freeSlots === "number");
@@ -283,10 +289,17 @@ test("trainer-view: buổi hôm nay của CHÍNH MÌNH — next/rest/đếm đú
   const sameDay = in3h.getDate() === now.getDate();
   let phoneSeq = 0;
   const mkBooked = async (trainerId, start, custName) => {
-    const slot = await PTSlot.create({ trainerId, startAt: start, endAt: new Date(start.getTime() + 3600000), capacity: 1, bookedCount: 1 });
+    const end = new Date(start.getTime() + 3600000);
+    const cls = await GymClass.create({
+      name: "Pilates 1:1", serviceType: "pilates", format: "1:1",
+      coachId: trainerId, startAt: start, endAt: end, capacity: FORMAT_CAPACITY["1:1"], bookedCount: 1,
+    });
     const passwordHash = await bcrypt.hash("123456", 10);
     const u = await User.create({ name: custName, phone: `0973${String(phoneSeq++).padStart(6, "0")}`, passwordHash, role: "customer" });
-    await Booking.insertMany([{ userId: u._id, type: "pt", slotId: slot._id, trainerId, title: "1:1 PT — X", startAt: start, endAt: slot.endAt, status: "booked", attendanceAt: null }]);
+    await Booking.insertMany([{
+      userId: u._id, classId: cls._id, trainerId, title: cls.name,
+      serviceType: "pilates", format: "1:1", startAt: start, endAt: end, status: "booked", attendanceAt: null,
+    }]);
   };
   const base = (await dash(tokens.trainer)).data;
   await mkBooked(linhTrainerId, in30, "Khach Ke Tiep");
@@ -297,11 +310,16 @@ test("trainer-view: buổi hôm nay của CHÍNH MÌNH — next/rest/đếm đú
   assert.equal(tr.todayCount, base.todayCount + (sameDay ? 2 : 1), "chỉ đếm buổi của mình");
   assert.ok(tr.next, "phải có buổi kế tiếp");
   assert.ok((tr.next.customers || []).includes("Khach Ke Tiep"), "buổi kế tiếp là buổi sớm nhất chưa qua");
+  // her-38: màn Tổng quan của HLV ghi dòng đậm "Tên · loại hình · HLV" -> payload phải có format
+  assert.equal(tr.next.format, "1:1", "buổi kế tiếp phải trả kèm loại hình");
   assert.ok(!JSON.stringify(tr).includes("Khach Cua Duc"), "không được lộ buổi của HLV khác");
   assert.ok(tr.monthSessions >= tr.todayCount, "buổi tháng bao gồm buổi hôm nay");
   assert.equal(tr.attendanceRate, 1, "Linh: mọi khách tháng này đều Đến (không no_show)");
   if (sameDay) {
     assert.ok(tr.rest.some((r) => (r.title || "").length > 0), "danh sách còn lại hôm nay có dòng");
+    // Mọi dòng đều phải có loại hình (dòng khác có thể là buổi seed sẵn với loại hình khác)
+    assert.ok(tr.rest.every((r) => typeof r.format === "string" && r.format.length > 0), "mỗi dòng còn lại hôm nay đều có loại hình");
+    assert.ok(tr.rest.some((r) => r.format === "1:1"), "buổi 1:1 vừa tạo nằm trong danh sách còn lại, đúng loại hình");
   }
 });
 
@@ -313,7 +331,7 @@ test("review-fix (N1): thu nợ qua /pay vào doanh thu tháng THU — kể cả
   // Gói bán THÁNG TRƯỚC còn nợ 300k (raw insert kèm nhật ký payment tháng trước)
   const lastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 10);
   const ins = await mongoose.connection.db.collection("packages").insertOne({
-    userId: khachId, name: "Gói Nợ Cũ", serviceType: "gym", price: 1000000, paidAmount: 700000,
+    userId: khachId, name: "Gói Nợ Cũ", serviceTypes: ["gym"], format: "1:1", price: 1000000, paidAmount: 700000,
     totalSessions: 10, usedSessions: 0, activatedAt: lastMonth, expiresAt: new Date(Date.now() + 60 * 24 * 3600 * 1000),
     pausedAt: null, paymentMethod: "cash", createdAt: lastMonth, updatedAt: lastMonth,
     payments: [{ amount: 700000, at: lastMonth, by: null }],
@@ -359,7 +377,7 @@ test("review-fix (V1): tháng ĐÃ CHỐT — HLV mới có buổi sau chốt v�
   const MONTH = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
 
   const fresh = await Trainer.create({ name: "HLV Sau Chot", specialty: "" });
-  await makeAttendedSession({ trainerId: fresh._id, kind: "pt1", start: pastDayThisMonth(0, 5), attended: 1 });
+  await makeAttendedSession({ trainerId: fresh._id, format: "1:1", start: pastDayThisMonth(0, 5), attended: 1 });
 
   const d = (await dash(tokens.admin)).data;
   const row = d.trainers.find((t) => t.name === "HLV Sau Chot");
@@ -373,7 +391,7 @@ test("review-fix (V4): unpaid dedupe theo khách, bỏ khách bị KHOÁ; expiri
   // 1 khách nợ 2 gói -> unpaid chỉ +1
   const u1 = await User.create({ name: "No Hai Goi", phone: "0974000002", passwordHash, role: "customer" });
   const mk = (userId, extra = {}) =>
-    Package.create({ userId, name: "G", serviceType: "gym", price: 1000000, paidAmount: 100000,
+    Package.create({ userId, name: "G", serviceTypes: ["gym"], format: "1:1", price: 1000000, paidAmount: 100000,
       totalSessions: 10, activatedAt: new Date(), expiresAt: new Date(Date.now() + 30 * 24 * 3600 * 1000), ...extra });
   await mk(u1._id);
   await mk(u1._id);
@@ -401,8 +419,15 @@ test("review-fix: bookingsToday loại buổi ĐÃ HỦY", async () => {
   const start = new Date(Date.now() + 60 * 60 * 1000);
   const sameDay = start.getDate() === now.getDate();
   if (!sameDay) return; // sát nửa đêm — bỏ qua cho ổn định
-  const slot = await PTSlot.create({ trainerId: ducTrainerId, startAt: start, endAt: new Date(start.getTime() + 3600000), capacity: 1, bookedCount: 0 });
-  await Booking.insertMany([{ userId: khachId, type: "pt", slotId: slot._id, trainerId: ducTrainerId, title: "1:1 PT — X", startAt: start, endAt: slot.endAt, status: "cancelled", attendanceAt: null }]);
+  const end = new Date(start.getTime() + 3600000);
+  const cls = await GymClass.create({
+    name: "Gym 1:1", serviceType: "gym", format: "1:1",
+    coachId: ducTrainerId, startAt: start, endAt: end, capacity: FORMAT_CAPACITY["1:1"], bookedCount: 0,
+  });
+  await Booking.insertMany([{
+    userId: khachId, classId: cls._id, trainerId: ducTrainerId, title: cls.name,
+    serviceType: "gym", format: "1:1", startAt: start, endAt: end, status: "cancelled", attendanceAt: null,
+  }]);
   const cur = (await dash(tokens.staff)).data;
   assert.equal(cur.bookingsToday, base.bookingsToday, "booking hủy không được đếm vào lượt đặt hôm nay");
 });
@@ -411,7 +436,7 @@ test("her-18: admin lọc dashboard theo ?month — tháng trước OK, tháng r
   const prev = new Date(now.getFullYear(), now.getMonth() - 1, 15);
   const prevMonth = `${prev.getFullYear()}-${String(prev.getMonth() + 1).padStart(2, "0")}`;
   // Fixture: 1 buổi điểm danh Ở THÁNG TRƯỚC — chỉ tháng đó được đếm
-  await makeAttendedSession({ trainerId: ducTrainerId, kind: "pt1", start: prev, attended: 1 });
+  await makeAttendedSession({ trainerId: ducTrainerId, format: "1:1", serviceType: "gym", start: prev, attended: 1 });
   const r = await call(`/dashboard?month=${prevMonth}`, { token: tokens.admin });
   assert.equal(r.status, 200);
   assert.ok("revenue" in r.data && "peakHours" in r.data, "vẫn đủ khối báo cáo");
@@ -436,14 +461,19 @@ test("her-30: Lịch hôm nay = 4 buổi sắp tới; hết thì 4 buổi cuối
   const at = (h) => new Date(base.getFullYear(), base.getMonth(), base.getDate(), h, 0, 0);
   for (const h of [8, 9, 10, 13, 14, 15]) {
     await GymClass.create({
-      name: `HER30 ${h}h`, serviceType: "pilates", coachId: linhId,
-      startAt: at(h), endAt: at(h + 1), capacity: 8, bookedCount: 1,
+      name: `HER30 ${h}h`, serviceType: "pilates", format: "1:4", coachId: linhId,
+      startAt: at(h), endAt: at(h + 1), capacity: FORMAT_CAPACITY["1:4"], bookedCount: 1,
     });
   }
   // Chốt 17/08: CÓ KHÁCH mới hiển thị — lớp 0 khách không được vào danh sách
   await GymClass.create({
-    name: "HER30 16h khong khach", serviceType: "pilates", coachId: linhId,
-    startAt: at(16), endAt: at(17), capacity: 8, bookedCount: 0,
+    name: "HER30 16h khong khach", serviceType: "pilates", format: "1:4", coachId: linhId,
+    startAt: at(16), endAt: at(17), capacity: FORMAT_CAPACITY["1:4"], bookedCount: 0,
+  });
+  // her-35: buổi 1:1 TRỐNG cũng phải cộng vào "chỗ trống" (trước đây là khung PT đếm riêng)
+  await GymClass.create({
+    name: "HER30 17h 1-1 trong", serviceType: "pilates", format: "1:1", coachId: linhId,
+    startAt: at(17), endAt: at(18), capacity: FORMAT_CAPACITY["1:1"], bookedCount: 0,
   });
   const titles = (d) => d.today.map((t) => t.title);
 
@@ -455,6 +485,15 @@ test("her-30: Lịch hôm nay = 4 buổi sắp tới; hết thì 4 buổi cuối
   const noon = await receptionDashboard(new Date(base.getFullYear(), base.getMonth(), base.getDate(), 12, 0));
   assert.deepEqual(titles(noon), ["HER30 10h", "HER30 13h", "HER30 14h", "HER30 15h"]);
 
+  // her-35: mỗi dòng "Lịch hôm nay" kèm LOẠI HÌNH của buổi
+  assert.equal(early.today[0].format, "1:4", "buổi 8h là lớp 1:4");
+  for (const r of noon.today) assert.ok(FORMATS.includes(r.format), "mỗi dòng có loại hình hợp lệ");
+
+  // her-35: chỗ trống lúc 12:00 chỉ tính buổi CHƯA kết thúc = 3 buổi 1:4 (13h,14h,15h —
+  // mỗi buổi 4 chỗ, đã đặt 1 → 3 chỗ) + lớp 16h trống (4 chỗ) + buổi 1:1 17h trống (1 chỗ) = 14.
+  // Buổi 1:1 trống PHẢI được cộng — trước her-35 nó là khung PT đếm ở nhánh riêng.
+  assert.equal(noon.freeSlots, 3 * 3 + 4 + 1, "chỗ trống gộp cả buổi 1:1/1:2 trống");
+
   // 23:00 — hết buổi sắp tới → vẫn 4 buổi cuối của ngày; lớp 0 khách (16h) KHÔNG hiện
   const night = await receptionDashboard(new Date(base.getFullYear(), base.getMonth(), base.getDate(), 23, 0));
   assert.deepEqual(titles(night), ["HER30 10h", "HER30 13h", "HER30 14h", "HER30 15h"]);
@@ -463,4 +502,36 @@ test("her-30: Lịch hôm nay = 4 buổi sắp tới; hết thì 4 buổi cuối
   }
 
   await GymClass.deleteMany({ name: /^HER30/ }); // dọn — không ảnh hưởng test khác
+});
+
+// her-35 phòng thủ: DB thật có thể còn booking cũ (mô hình Group/PT) THIẾU classId.
+// Màn Tổng quan không được sập vì mấy bản ghi rác đó, và không được đếm chúng thành "buổi".
+test("phòng thủ: booking rác thiếu classId không làm hỏng màn Tổng quan", async () => {
+  const beforeAdmin = (await dash(tokens.admin)).data;
+  const beforeTrainer = (await dash(tokens.trainer)).data;
+  const ducBefore = beforeAdmin.trainers.find((t) => t.name === "HLV Đức");
+
+  const bad = pastDayThisMonth(2, 4);
+  const todayStart = new Date(Date.now() + 45 * 60 * 1000);
+  await mongoose.connection.db.collection("bookings").insertMany([
+    // Buổi ĐÃ điểm danh trong tháng, thiếu classId -> không được tính thành buổi của Đức
+    { userId: khachId, trainerId: ducTrainerId, title: "Rac cu", serviceType: "gym", format: "1:1",
+      startAt: bad, endAt: new Date(bad.getTime() + 3600000), status: "completed", attendanceAt: bad,
+      createdAt: bad, updatedAt: bad },
+    // Buổi HÔM NAY của Linh, thiếu classId -> lịch dạy HLV bỏ qua, không sập
+    { userId: khachId, trainerId: linhTrainerId, title: "Rac cu 2", serviceType: "pilates", format: "1:1",
+      startAt: todayStart, endAt: new Date(todayStart.getTime() + 3600000), status: "booked", attendanceAt: null,
+      createdAt: new Date(), updatedAt: new Date() },
+  ]);
+
+  const admin = await dash(tokens.admin);
+  const rec = await dash(tokens.staff);
+  const tr = await dash(tokens.trainer);
+  assert.equal(admin.status, 200, "admin vẫn xem được báo cáo");
+  assert.equal(rec.status, 200, "lễ tân vẫn xem được vận hành hôm nay");
+  assert.equal(tr.status, 200, "HLV vẫn xem được lịch dạy");
+
+  const ducAfter = admin.data.trainers.find((t) => t.name === "HLV Đức");
+  assert.equal(ducAfter.sessions, ducBefore.sessions, "booking thiếu classId không thành 1 buổi");
+  assert.equal(tr.data.todayCount, beforeTrainer.todayCount, "buổi rác không vào lịch dạy hôm nay");
 });

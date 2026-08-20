@@ -8,48 +8,73 @@ const HAS_SESSIONS_LEFT = {
   },
 };
 
-// Trừ 1 buổi ATOMIC theo H7 + thứ tự Q4 (quyết định 12/08/2026):
+// Trừ 1 buổi ATOMIC theo H7 mới (her-35): gói khớp = CHỨA bộ môn của lớp (mảng
+// serviceTypes, match phần tử) + ĐÚNG loại hình. Thứ tự Q4 (12/08/2026) giữ nguyên:
 // 1) gói CÓ thời hạn còn phủ ngày tập — gói sắp hết hạn trừ TRƯỚC
 // 2) hết mới tới gói KHÔNG thời hạn — gói kích hoạt trước trừ trước
 // 2 lệnh findOneAndUpdate nối tiếp, mỗi lệnh tự chống race (C3) — không read-modify-write.
 // Gói không giới hạn buổi vẫn +1 usedSessions (thống kê + hoàn buổi đối xứng khi hủy — C2).
 // Gói đang BẢO LƯU (pausedAt != null) không được trừ (Q11 16/08).
-async function chargeSession(userId, serviceType, startAt) {
+async function chargeSession(userId, { serviceType, format }, startAt) {
+  const match = { userId, serviceTypes: serviceType, format, pausedAt: null };
   const dated = await Package.findOneAndUpdate(
     // $gte với Date không match expiresAt null (type bracketing của MongoDB)
-    { userId, serviceType, pausedAt: null, expiresAt: { $gte: startAt }, ...HAS_SESSIONS_LEFT },
+    { ...match, expiresAt: { $gte: startAt }, ...HAS_SESSIONS_LEFT },
     { $inc: { usedSessions: 1 } },
     // Khoá phụ để tất định khi 2 gói trùng hạn — khớp thứ tự hiển thị ở /me/packages
     { sort: { expiresAt: 1, activatedAt: 1, _id: 1 }, new: true }
   );
   if (dated) return dated;
   return Package.findOneAndUpdate(
-    { userId, serviceType, pausedAt: null, expiresAt: null, ...HAS_SESSIONS_LEFT },
+    { ...match, expiresAt: null, ...HAS_SESSIONS_LEFT },
     { $inc: { usedSessions: 1 } },
     { sort: { activatedAt: 1, _id: 1 }, new: true }
   );
 }
 
-// Chẩn đoán lý do không trừ được buổi — chỉ đọc, trả message tiếng Việt nói rõ loại gói thiếu (C6)
-async function packageErrorMessage(userId, serviceType, startAt) {
+// Chẩn đoán lý do không trừ được buổi — chỉ đọc, trả message tiếng Việt nói rõ
+// thiếu BỘ MÔN hay sai LOẠI HÌNH (C6).
+// her-39: forStaff = true khi QUẦY ĐẶT HỘ — người đọc message là lễ tân/admin, không phải
+// chủ gói. Đổi ngôi ("bạn" -> "học viên này") và bỏ vế "liên hệ quầy lễ tân" (họ ĐANG là quầy),
+// thay bằng việc quầy cần làm.
+async function packageErrorMessage(userId, { serviceType, format }, startAt, { forStaff = false } = {}) {
   const label = labelOfSync(serviceType);
-  const anyOfType = await Package.findOne({ userId, serviceType });
-  if (!anyOfType) return `Buổi này cần gói ${label} — bạn chưa có gói ${label}`;
-  const notPaused = await Package.findOne({ userId, serviceType, pausedAt: null });
-  if (!notPaused) return `Gói ${label} của bạn đang bảo lưu — liên hệ quầy lễ tân để mở lại`;
+  const who = forStaff ? "học viên này" : "bạn";
+  const owner = forStaff ? "của học viên" : "của bạn";
+  const anyOfType = await Package.findOne({ userId, serviceTypes: serviceType });
+  if (!anyOfType) return `Buổi này cần gói có bộ môn ${label} — ${who} chưa có gói ${label}`;
+  const rightFormat = await Package.findOne({ userId, serviceTypes: serviceType, format });
+  if (!rightFormat) {
+    return `Buổi này là loại hình ${format} — ${who} chưa có gói ${label} ${format}`;
+  }
+  const base = { userId, serviceTypes: serviceType, format };
+  const notPaused = await Package.findOne({ ...base, pausedAt: null });
+  if (!notPaused) {
+    return forStaff
+      ? `Gói ${label} ${format} của học viên đang bảo lưu — mở bảo lưu trước khi đặt`
+      : `Gói ${label} ${format} của bạn đang bảo lưu — liên hệ quầy lễ tân để mở lại`;
+  }
   const validNow = await Package.findOne({
-    userId, serviceType, pausedAt: null,
+    ...base, pausedAt: null,
     $or: [{ expiresAt: null }, { expiresAt: { $gte: new Date() } }],
   });
-  if (!validNow) return `Gói ${label} của bạn đã hết hạn, vui lòng gia hạn`;
+  if (!validNow) {
+    return forStaff
+      ? `Gói ${label} ${format} của học viên đã hết hạn — gia hạn trước khi đặt`
+      : `Gói ${label} ${format} của bạn đã hết hạn, vui lòng gia hạn`;
+  }
   const coversDate = await Package.findOne({
-    userId, serviceType, pausedAt: null,
+    ...base, pausedAt: null,
     $or: [{ expiresAt: null }, { expiresAt: { $gte: startAt } }],
   });
   if (!coversDate) {
-    return `Gói ${label} của bạn hết hạn trước ngày diễn ra buổi này — vui lòng gia hạn hoặc chọn buổi sớm hơn`;
+    return forStaff
+      ? `Gói ${label} ${format} ${owner} hết hạn trước ngày diễn ra buổi này — gia hạn hoặc chọn buổi khác`
+      : `Gói ${label} ${format} của bạn hết hạn trước ngày diễn ra buổi này — vui lòng gia hạn hoặc chọn buổi sớm hơn`;
   }
-  return `Gói ${label} đã hết buổi, vui lòng gia hạn`;
+  return forStaff
+    ? `Gói ${label} ${format} của học viên đã hết buổi — cần gói mới trước khi đặt`
+    : `Gói ${label} ${format} đã hết buổi, vui lòng gia hạn`;
 }
 
 // Chuẩn hoá gói trả cho app (cả app khách lẫn nội bộ) — null = không giới hạn.
@@ -63,8 +88,9 @@ function serializePackage(p) {
   return {
     id: p._id,
     name: p.name,
-    serviceType: p.serviceType,
-    serviceLabel: labelOfSync(p.serviceType),
+    serviceTypes: p.serviceTypes,
+    serviceLabels: p.serviceTypes.map(labelOfSync),
+    format: p.format,
     price: p.price,
     totalSessions: p.totalSessions,
     usedSessions: p.usedSessions,
@@ -80,4 +106,4 @@ function serializePackage(p) {
   };
 }
 
-module.exports = { chargeSession, packageErrorMessage, serializePackage };
+module.exports = { chargeSession, packageErrorMessage, serializePackage, HAS_SESSIONS_LEFT };

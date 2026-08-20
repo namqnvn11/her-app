@@ -1,13 +1,16 @@
 const mongoose = require("mongoose");
-const { PACKAGE_SERVICE_TYPES, PAYMENT_METHODS } = require("../utils/serviceTypes");
+const { PAYMENT_METHODS } = require("../utils/serviceTypes");
+const { FORMATS, packageShapeError } = require("../utils/formats");
 
 const packageSchema = new mongoose.Schema(
   {
     userId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
     name: { type: String, required: true }, // "Pilates 24 buổi — 3 tháng"
-    // Loại hình (H7): gói loại nào chỉ đặt được buổi loại đó; "pt" là loại riêng (Q1)
-    // Loại gói: bộ môn bất kỳ trong danh mục DB + "pt" — validate ở route (her-19)
-    serviceType: { type: String, required: true },
+    // her-35: gói MIX — mảng bộ môn (≥1, thuộc danh mục, validate ở route) + 1 loại hình.
+    // Gói buổi: format 1:1/1:2/1:4, môn nào cũng được. Gói thời hạn (totalSessions null):
+    // chỉ ["yoga"] + "1:8" (chốt 19/08 theo chat khách).
+    serviceTypes: { type: [String], required: true },
+    format: { type: String, enum: FORMATS, required: true },
     price: { type: Number, required: true, min: 0 },
     // 3 kiểu gói (Q3): chỉ buổi (expiresAt null) / chỉ thời hạn (totalSessions null =
     // không giới hạn buổi) / buổi + thời hạn. Không được null cả hai (validate dưới).
@@ -43,10 +46,17 @@ packageSchema.pre("validate", function (next) {
   if (this.totalSessions == null && this.expiresAt == null) {
     return next(new Error("Gói phải có số buổi hoặc thời hạn (hoặc cả hai)"));
   }
+  // Luật hình dạng gói dùng CHUNG với route bán gói — 1 nguồn duy nhất (C5)
+  const err = packageShapeError({
+    format: this.format,
+    serviceTypes: this.serviceTypes,
+    hasSessions: this.totalSessions != null,
+  });
+  if (err) return next(new Error(err));
   next();
 });
 
-// Query chọn gói khi đặt lịch: user + loại hình + hạn dùng
-packageSchema.index({ userId: 1, serviceType: 1, expiresAt: 1 });
+// Query chọn gói khi đặt lịch: user + loại hình + hạn dùng; bộ môn match phần tử mảng serviceTypes
+packageSchema.index({ userId: 1, format: 1, expiresAt: 1 });
 
 module.exports = mongoose.model("Package", packageSchema);

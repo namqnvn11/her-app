@@ -2,7 +2,9 @@
 // -> Date, để lễ tân nhập nhanh trên điện thoại.
 // Trả về { date } khi hợp lệ, hoặc { error } — KHÔNG âm thầm đẩy ngày quá khứ sang năm sau
 // (trước đây gõ nhầm "05/01" vào tháng 8 sẽ tạo lớp ở tháng 1 năm sau mà không ai biết).
-export function parseQuickDateTime(text, now = new Date()) {
+// allowPast (her-39): mặc định false. Màn xếp lịch của QUẦY truyền true để dựng lại buổi
+// ĐÃ TẬP trong quá khứ — server cũng chỉ mở đường này cho lễ tân/admin.
+export function parseQuickDateTime(text, now = new Date(), { allowPast = false } = {}) {
   const m = String(text || "")
     .trim()
     .match(/^(\d{1,2})\/(\d{1,2})(?:\/(\d{4}))?\s+(\d{1,2}):(\d{2})$/);
@@ -18,7 +20,7 @@ export function parseQuickDateTime(text, now = new Date()) {
   if (d.getDate() !== Number(dd) || d.getMonth() !== Number(mm) - 1) {
     return { error: "Ngày này không tồn tại, kiểm tra lại" };
   }
-  if (d < now) {
+  if (!allowPast && d < now) {
     return {
       error: `Ngày giờ này đã qua — nếu ý bạn là năm sau, nhập đủ năm: ${dd}/${mm}/${now.getFullYear() + 1} ${hh}:${min}`,
     };
