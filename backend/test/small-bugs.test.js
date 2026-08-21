@@ -413,10 +413,16 @@ test("L17: validate SĐT + mật khẩu khi lễ tân tạo tài khoản", async
   assert.equal(valid.status, 201, JSON.stringify(valid.data));
 });
 
-test("L17: JWT hết hạn sau 7 ngày (mặc định mới thay vì 30)", async () => {
+// L17 (her-01) từng hạ hạn phiên 30 -> 7 ngày. Chủ dự án ĐẢO lại 21/08 (her-45): 30 ngày
+// + GIA HẠN TRƯỢT, đổi lấy việc khách không phải gõ lại mật khẩu do lễ tân cấp.
+// Bù lại bằng 2 đường cắt phiên đã có: khoá tài khoản (403 ngay) và đổi mật khẩu (chết vĩnh viễn)
+// — cả 2 đều có test riêng ở session-renew.test.js.
+test("L17/her-45: hạn phiên lấy từ JWT_EXPIRES_IN, mặc định 30 ngày", async () => {
   const { token } = await login(A, "0909090909");
   const payload = jwt.decode(token);
-  assert.equal(payload.exp - payload.iat, 7 * 24 * 3600);
+  const { EXPIRES_IN } = require("../src/utils/token");
+  assert.equal(EXPIRES_IN, "30d", "nguồn duy nhất của hạn phiên là JWT_EXPIRES_IN (.env)");
+  assert.equal(payload.exp - payload.iat, 30 * 24 * 3600);
 });
 
 test("L17: chặn đoán mật khẩu — sai quá số lần bị 429 kể cả khi nhập đúng, hết cửa sổ thì login lại được", async () => {

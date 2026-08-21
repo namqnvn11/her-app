@@ -86,10 +86,10 @@ if (!process.env.JWT_SECRET) {
 // JWT_EXPIRES_IN cấu hình rác sẽ làm jwt.sign throw ở lần login đầu — bắt ngay lúc boot
 try {
   require("jsonwebtoken").sign({ boot: 1 }, process.env.JWT_SECRET, {
-    expiresIn: process.env.JWT_EXPIRES_IN || "7d",
+    expiresIn: require("./src/utils/token").EXPIRES_IN,
   });
 } catch (err) {
-  console.error(`JWT_EXPIRES_IN không hợp lệ ("${process.env.JWT_EXPIRES_IN}") — dùng dạng "7d", "12h"...`);
+  console.error(`JWT_EXPIRES_IN không hợp lệ ("${process.env.JWT_EXPIRES_IN}") — dùng dạng "30d", "12h"...`);
   process.exit(1);
 }
 

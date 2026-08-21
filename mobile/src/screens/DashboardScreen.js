@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef } from "react";
 import { View, Text, ScrollView, TouchableOpacity, StyleSheet, RefreshControl } from "react-native";
-import { useFocusEffect } from "@react-navigation/native";
+import { useFocusEffect, useNavigation } from "@react-navigation/native";
 import { Feather } from "@expo/vector-icons";
 import TopBar from "../components/TopBar";
 import HeaderBlock from "../components/HeaderBlock";
@@ -8,17 +8,20 @@ import SectionLabel from "../components/SectionLabel";
 import TimeRow from "../components/TimeRow";
 import AppButton from "../components/AppButton";
 import RosterSheet from "../components/RosterSheet";
+import MonthPickerSheet from "../components/MonthPickerSheet";
 import { useAuth } from "../context/AuthContext";
 import { api } from "../api/client";
 import { useTheme } from "../theme";
 import { FORMATS } from "../utils/formats";
 import { classTitle } from "../utils/displayName";
+import { dayLabel } from "../utils/dayLabel";
 
 const money = (n) => (n || 0).toLocaleString("vi-VN") + "đ";
 const short = (n) => (n >= 1e6 ? (n / 1e6).toFixed(1).replace(".", ",") + "tr" : (n || 0).toLocaleString("vi-VN"));
 
 export default function DashboardScreen() {
   const { user } = useAuth();
+  const navigation = useNavigation();
   const { c } = useTheme();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -34,6 +37,7 @@ export default function DashboardScreen() {
   const repMonthRef = useRef(null);
   const loadSeq = useRef(0);
   const [rosterClassId, setRosterClassId] = useState(null); // HLV bấm "Điểm danh lớp" từ Buổi kế tiếp
+  const [monthSheet, setMonthSheet] = useState(false); // her-46: sheet chọn tháng báo cáo
 
   const load = useCallback(async (pm) => {
     // her-18: admin xem theo THÁNG — pm truyền từ bộ chuyển; không truyền thì dùng tháng đang xem
@@ -67,16 +71,12 @@ export default function DashboardScreen() {
   const isTrainer = role === "trainer";
   if (isAdmin && repMonthRef.current === null) repMonthRef.current = repMonth;
 
-  const nowM = new Date();
-  const atCurrentMonth = repMonth.y === nowM.getFullYear() && repMonth.m === nowM.getMonth() + 1;
-  // Chỉ lùi tới tháng đầu tiên CÓ DỮ LIỆU (server trả minMonth) — không lùi vô hạn (her-19)
-  const curStr = `${repMonth.y}-${String(repMonth.m).padStart(2, "0")}`;
-  const canGoBack = !!data?.minMonth && curStr > data.minMonth; // lỗi/chưa tải -> ẩn mũi tên (review N9)
-  const shiftReportMonth = (delta) => {
-    if (delta > 0 && atCurrentMonth) return; // không có tháng tương lai
-    if (delta < 0 && !canGoBack) return; // trước đó không còn dữ liệu
-    const next = new Date(repMonth.y, repMonth.m - 1 + delta, 1);
-    const pm = { y: next.getFullYear(), m: next.getMonth() + 1 };
+  // her-46: chọn tháng bằng SHEET lưới 12 tháng (góp ý 21/08) thay cho pill phải bấm từng
+  // nhịp. Luật giới hạn giữ nguyên: không có tháng tương lai, không lùi quá minMonth của server.
+  const pickReportMonth = (y, m) => {
+    setMonthSheet(false);
+    if (y === repMonth.y && m === repMonth.m) return; // chọn lại đúng tháng đang xem — khỏi tải lại
+    const pm = { y, m };
     setRepMonth(pm);
     load(pm);
   };
@@ -115,30 +115,20 @@ export default function DashboardScreen() {
       {/* Mẫu 11: dashboard Admin KHÔNG có header màu — tiêu đề thường */}
       {isAdmin && (
         <>
-          <TopBar title="Tổng quan" sub="Báo cáo thu – chi theo tháng · Admin" />
-          {/* her-19: bộ chuyển tháng dạng pill gọn — mũi tên ẨN hẳn khi không đi tiếp được;
-              chỉ lùi được tới tháng ĐẦU TIÊN có dữ liệu (minMonth từ server) */}
-          <View style={styles.repMonthRow}>
-            <View style={[styles.repPill, { backgroundColor: c.card, borderColor: c.hairline }]}>
-              {canGoBack ? (
-                <TouchableOpacity onPress={() => shiftReportMonth(-1)} hitSlop={12} style={styles.repArrow}>
-                  <Feather name="chevron-left" size={15} color={c.primary} />
-                </TouchableOpacity>
-              ) : (
-                <View style={styles.repArrow} />
-              )}
-              <Text style={[styles.repMonthText, { color: c.ink }]}>
-                {atCurrentMonth ? "Tháng này" : `Tháng ${repMonth.m}/${repMonth.y}`}
-              </Text>
-              {!atCurrentMonth ? (
-                <TouchableOpacity onPress={() => shiftReportMonth(1)} hitSlop={12} style={styles.repArrow}>
-                  <Feather name="chevron-right" size={15} color={c.primary} />
-                </TouchableOpacity>
-              ) : (
-                <View style={styles.repArrow} />
-              )}
-            </View>
-          </View>
+          <TopBar
+            title="Tổng quan"
+            sub="Báo cáo thu – chi theo tháng · Admin"
+            right={
+              <TouchableOpacity
+                activeOpacity={0.7}
+                onPress={() => setMonthSheet(true)}
+                style={[styles.repPill, { borderColor: c.primary }]}
+              >
+                <Text style={[styles.repMonthText, { color: c.ink }]}>{`T${repMonth.m}/${repMonth.y}`}</Text>
+                <Feather name="chevron-down" size={13} color={c.primary} />
+              </TouchableOpacity>
+            }
+          />
         </>
       )}
 
@@ -259,6 +249,8 @@ export default function DashboardScreen() {
             <SectionLabel>Buổi kế tiếp</SectionLabel>
             <TimeRow
               time={data.next.time}
+              // Ghi rõ thứ/ngày ("T5-21/08") dưới giờ — chỉ "07:00" thì không biết là khi nào
+              sub={data.next.startAt ? dayLabel(data.next.startAt) : null}
               // her-38: dòng đậm thống nhất — buổi này là của chính HLV nên ghép tên mình
               title={classTitle({ name: data.next.title, format: data.next.format, coach: user?.name })}
               meta={(data.next.customers || []).join(", ")}
@@ -313,18 +305,38 @@ export default function DashboardScreen() {
               />
             ))}
             <SectionLabel>Cần xử lý</SectionLabel>
-            {(data.todo || []).map((t, i, arr) => (
-              <View
-                key={t.title}
-                style={[styles.todo, i !== arr.length - 1 && { borderBottomWidth: 1, borderBottomColor: c.hairline }]}
-              >
-                <View style={{ flex: 1 }}>
-                  <Text style={[styles.payName, { color: c.ink }]}>{t.title}</Text>
-                  {!!t.sub && <Text style={[styles.paySub, { color: c.inkSoft }]}>{t.sub}</Text>}
+            {/* her-43: dòng nào server gắn `flag` thì bấm được — nhảy sang tab Tài khoản đã lọc
+                sẵn đúng nhóm khách đang nói tới. Không có flag = không có mũi tên (mũi tên mà
+                bấm không ra gì là đánh lừa người dùng — góp ý 21/08). */}
+            {(data.todo || []).map((t, i, arr) => {
+              const rowStyle = [
+                styles.todo,
+                i !== arr.length - 1 && { borderBottomWidth: 1, borderBottomColor: c.hairline },
+              ];
+              const body = (
+                <>
+                  <View style={{ flex: 1 }}>
+                    <Text style={[styles.payName, { color: c.ink }]}>{t.title}</Text>
+                    {!!t.sub && <Text style={[styles.paySub, { color: c.inkSoft }]}>{t.sub}</Text>}
+                  </View>
+                  {!!t.flag && <Feather name="chevron-right" size={16} color={c.inkSoft} />}
+                </>
+              );
+              return t.flag ? (
+                <TouchableOpacity
+                  key={t.title}
+                  activeOpacity={0.7}
+                  onPress={() => navigation.navigate("Tai_khoan", { flag: t.flag })}
+                  style={rowStyle}
+                >
+                  {body}
+                </TouchableOpacity>
+              ) : (
+                <View key={t.title} style={rowStyle}>
+                  {body}
                 </View>
-                <Feather name="chevron-right" size={16} color={c.inkSoft} />
-              </View>
-            ))}
+              );
+            })}
           </>
         )}
       </View>
@@ -332,6 +344,18 @@ export default function DashboardScreen() {
       {/* Chỉ HLV mở được sheet này ở màn Tổng quan (khối "Buổi kế tiếp") — không truyền
           canAdd/canCancel: đặt hộ & hủy hộ là quyền của quầy (her-39) */}
       <RosterSheet classId={rosterClassId} onClose={() => setRosterClassId(null)} />
+
+      {/* her-46: sheet chọn tháng báo cáo — chỉ admin có bộ lọc này */}
+      {isAdmin && (
+        <MonthPickerSheet
+          visible={monthSheet}
+          year={repMonth.y}
+          month={repMonth.m}
+          minMonth={data?.minMonth}
+          onPick={pickReportMonth}
+          onClose={() => setMonthSheet(false)}
+        />
+      )}
     </ScrollView>
   );
 }
@@ -363,16 +387,16 @@ const styles = StyleSheet.create({
   todo: { flexDirection: "row", alignItems: "center", paddingVertical: 13 },
   note: { borderRadius: 12, paddingVertical: 12, paddingHorizontal: 14, marginTop: 16 },
   noteText: { fontSize: 12, lineHeight: 18, fontWeight: "500" },
-  repMonthRow: { paddingHorizontal: 22, marginTop: 4, flexDirection: "row" },
+  // Nút mở sheet chọn tháng — viền màu chủ đạo cho thấy bấm được (góp ý 21/08)
   repPill: {
     flexDirection: "row",
     alignItems: "center",
+    gap: 5,
     borderRadius: 999,
-    borderWidth: 1,
-    paddingHorizontal: 6,
-    paddingVertical: 3,
+    borderWidth: 1.5,
+    paddingHorizontal: 11,
+    paddingVertical: 5,
   },
-  repArrow: { padding: 5, width: 25, alignItems: "center" },
-  repMonthText: { fontSize: 12, fontWeight: "700", minWidth: 96, textAlign: "center" },
+  repMonthText: { fontSize: 12.5, fontWeight: "800" },
   closedNote: { fontSize: 11.5, lineHeight: 17, marginTop: 10 },
 });

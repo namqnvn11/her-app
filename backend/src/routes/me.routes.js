@@ -13,15 +13,20 @@ const { serializePackage } = require("../utils/packages");
 const { isValidPassword, MIN_PASSWORD_LENGTH } = require("../utils/validators");
 const { isValidClassType, labelOf } = require("../utils/disciplines");
 const { blockedMinutes, recordFailure, resetAttempts } = require("../utils/loginRateLimit");
+const { renewedToken } = require("../utils/token");
 
 const router = express.Router();
 router.use(requireAuth);
 
-// GET /api/me — kèm config để app đồng bộ quy tắc với server (vd số giờ tự hủy)
+// GET /api/me — kèm config để app đồng bộ quy tắc với server (vd số giờ tự hủy).
+// her-45: đây cũng là chỗ GIA HẠN TRƯỢT — app gọi /me mỗi lần mở, token đã cũ thì trả về
+// `token` mới để app lưu đè. Chưa tới lúc gia hạn thì KHÔNG có field `token` (app giữ nguyên).
 router.get("/", (req, res) => {
+  const token = renewedToken(req.user, req.tokenPayload);
   res.json({
     user: req.user.toPublicJSON(),
     config: { minCancelHours: MIN_CANCEL_HOURS, attendanceOpenBeforeMinutes: ATTENDANCE_OPEN_BEFORE_MINUTES, minPasswordLength: MIN_PASSWORD_LENGTH },
+    ...(token ? { token } : {}),
   });
 });
 

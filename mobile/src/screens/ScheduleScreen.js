@@ -9,6 +9,7 @@ import AppButton from "../components/AppButton";
 import { api } from "../api/client";
 import { syncReminders } from "../utils/reminders";
 import { classTitle } from "../utils/displayName";
+import { dayLabelOrToday } from "../utils/dayLabel";
 import { useAuth } from "../context/AuthContext";
 import { useTheme } from "../theme";
 
@@ -17,13 +18,6 @@ function hoursUntil(dateStr) {
 }
 function fmtTime(d) {
   return new Date(d).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" });
-}
-function fmtDay(d) {
-  const date = new Date(d);
-  if (date.toDateString() === new Date().toDateString()) return "hôm nay";
-  const dd = String(date.getDate()).padStart(2, "0");
-  const mm = String(date.getMonth() + 1).padStart(2, "0");
-  return `${dd}/${mm}`;
 }
 const STATUS_LABEL = { completed: "Đã tập", cancelled: "Đã hủy", no_show: "Không đến", booked: "Đã đặt" };
 
@@ -210,7 +204,7 @@ export default function ScheduleScreen() {
             <TimeRow
               key={b.id}
               time={fmtTime(b.startAt)}
-              sub={fmtDay(b.startAt)}
+              sub={dayLabelOrToday(b.startAt)}
               // her-38: dòng đậm thống nhất — loại hình đã lên dòng đậm nên bỏ khỏi meta.
               // Câu nhắc sát giờ đi vào meta để nằm ngay dưới dòng đậm (children đệm xa hơn).
               title={classTitle(b)}
@@ -268,7 +262,7 @@ export default function ScheduleScreen() {
               <TimeRow
                 key={h.id}
                 time={fmtTime(h.startAt)}
-                sub={fmtDay(h.startAt)}
+                sub={dayLabelOrToday(h.startAt)}
                 title={classTitle(h)}
                 last={i === history.length - 1}
                 right={

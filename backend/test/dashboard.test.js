@@ -312,6 +312,13 @@ test("trainer-view: buổi hôm nay của CHÍNH MÌNH — next/rest/đếm đú
   assert.ok((tr.next.customers || []).includes("Khach Ke Tiep"), "buổi kế tiếp là buổi sớm nhất chưa qua");
   // her-38: màn Tổng quan của HLV ghi dòng đậm "Tên · loại hình · HLV" -> payload phải có format
   assert.equal(tr.next.format, "1:1", "buổi kế tiếp phải trả kèm loại hình");
+  // her-41: app ghi nhãn thứ/ngày ("T5-21/08") dưới giờ -> payload phải có mốc thời gian thật
+  assert.ok(tr.next.startAt, "buổi kế tiếp phải trả kèm startAt để app ghi thứ/ngày");
+  assert.equal(
+    new Date(tr.next.startAt).getTime(),
+    in30.getTime(),
+    "startAt của buổi kế tiếp phải đúng giờ bắt đầu buổi sớm nhất chưa qua"
+  );
   assert.ok(!JSON.stringify(tr).includes("Khach Cua Duc"), "không được lộ buổi của HLV khác");
   assert.ok(tr.monthSessions >= tr.todayCount, "buổi tháng bao gồm buổi hôm nay");
   assert.equal(tr.attendanceRate, 1, "Linh: mọi khách tháng này đều Đến (không no_show)");

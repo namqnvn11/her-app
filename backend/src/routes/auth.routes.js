@@ -1,20 +1,14 @@
 const express = require("express");
 const bcrypt = require("bcryptjs");
-const jwt = require("jsonwebtoken");
 const User = require("../models/User");
 const { MIN_CANCEL_HOURS } = require("../utils/cancelRule");
 const { ATTENDANCE_OPEN_BEFORE_MINUTES } = require("../utils/attendanceRule");
 const { isValidPhone, isValidPassword, MIN_PASSWORD_LENGTH } = require("../utils/validators");
 const { blockedMinutes, recordFailure, resetAttempts } = require("../utils/loginRateLimit");
 const wrap = require("../utils/asyncHandler");
+const { signToken } = require("../utils/token");
 
 const router = express.Router();
-
-function signToken(user) {
-  return jwt.sign({ sub: user._id.toString(), role: user.role }, process.env.JWT_SECRET, {
-    expiresIn: process.env.JWT_EXPIRES_IN || "7d",
-  });
-}
 
 // Cấu hình app cần biết (vd số giờ tối thiểu để tự hủy lịch) — gửi kèm khi login và /me
 // để mobile không phải ghi cứng con số nào.

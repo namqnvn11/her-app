@@ -6,6 +6,7 @@ const { requireAuth, requireManagement } = require("../middleware/auth");
 const { isValidPhone, isValidPassword, MIN_PASSWORD_LENGTH } = require("../utils/validators");
 const wrap = require("../utils/asyncHandler");
 const { isValidClassType, labelOf } = require("../utils/disciplines");
+const { debtCustomers, expiringPackages } = require("../utils/customerFlags");
 
 const router = express.Router();
 // Phân quyền 3 tầng:
@@ -28,13 +29,47 @@ function assertCanManage(req, role) {
   return allowed.includes(role);
 }
 
-// GET /api/accounts?role=trainer|customer|reception
+// GET /api/accounts?role=trainer|customer|reception&flag=debt|expiring
+// her-43: `flag` là đường đi từ khối "Cần xử lý" của màn Tổng quan — lọc đúng nhóm khách
+// mà con số trên dashboard đang nói tới (dùng chung util nên không lệch số).
+// Chỉ áp cho HỌC VIÊN; vai trò nào không quản lý được học viên thì 403 (H5).
+const FLAGS = ["debt", "expiring"];
+
 router.get("/", wrap(async (req, res) => {
   const allowed = ALLOWED_TO_MANAGE[req.user.role] || [];
-  const { role } = req.query;
+  const { role, flag } = req.query;
   const query = { role: role && allowed.includes(role) ? role : { $in: allowed } };
+
+  let extraByUser = null; // { [userId]: { debt } | { expiringAt } } — gắn thêm vào từng dòng
+  if (flag !== undefined) {
+    if (!FLAGS.includes(flag)) {
+      return res.status(400).json({ error: "Bộ lọc không hợp lệ (chỉ nhận debt hoặc expiring)" });
+    }
+    if (!allowed.includes("customer")) {
+      return res.status(403).json({ error: "Bạn không có quyền xem danh sách học viên" });
+    }
+    if (role && role !== "customer") {
+      return res.status(400).json({ error: "Bộ lọc này chỉ áp dụng cho danh sách học viên" });
+    }
+    query.role = "customer";
+    if (flag === "debt") {
+      const { ids, amountByUser } = await debtCustomers();
+      query._id = { $in: ids };
+      extraByUser = Object.fromEntries(ids.map((id) => [id, { debt: amountByUser[id] }]));
+    } else {
+      const { ids, soonestByUser } = await expiringPackages();
+      query._id = { $in: ids };
+      extraByUser = Object.fromEntries(ids.map((id) => [id, { expiringAt: soonestByUser[id] }]));
+    }
+  }
+
   const users = await User.find(query).sort({ createdAt: -1 });
-  res.json({ accounts: users.map((u) => u.toPublicJSON()) });
+  res.json({
+    accounts: users.map((u) => ({
+      ...u.toPublicJSON(),
+      ...(extraByUser ? extraByUser[u._id.toString()] || {} : {}),
+    })),
+  });
 }));
 
 // POST /api/accounts  { name, phone, password, role, specialties? } — chuyên môn HLV CHỌN từ danh mục (her-19)

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { View, Text, TouchableOpacity, StyleSheet } from "react-native";
 import { Feather } from "@expo/vector-icons";
 import { useTheme } from "../theme";
@@ -48,7 +48,9 @@ function fmt(year, month, day, hour, minute, mode) {
 // mode: "datetime" (mặc định) | "date" (chỉ ngày — vd hạn gói) | "time" (chỉ giờ — vd lịch tự động)
 // allowPast (her-39): mặc định false — ngày trước hôm nay bị mờ/khoá như cũ. Màn xếp lịch của
 // QUẦY truyền true để dựng lại buổi ĐÃ TẬP trong quá khứ (server cũng chỉ mở cho quầy).
-export default function DateTimeField({ value, onChange, mode = "datetime", placeholder, allowPast = false }) {
+// clearable (her-44, góp ý 21/08): ô nào ĐƯỢC PHÉP để trống thì bật cờ này -> chọn nhầm còn có
+// nút ✕ để bỏ, không phải tắt cả form mở lại. Ô bắt buộc KHÔNG bật (xoá chỉ tổ làm form sai).
+export default function DateTimeField({ value, onChange, mode = "datetime", placeholder, allowPast = false, clearable = false }) {
   const { c } = useTheme();
   const parsed = parseValue(value, mode);
   const now = new Date();
@@ -59,6 +61,26 @@ export default function DateTimeField({ value, onChange, mode = "datetime", plac
   );
   const [sel, setSel] = useState(() => parsed || { day: null, month: null, year: null, hour: null, minute: 0 });
   const [hint, setHint] = useState(""); // nhắc trong bảng khi bấm Xong mà chưa chọn đủ (review B2)
+
+  // Giá trị bị đổi/xoá TỪ NGOÀI (bấm ✕, hoặc form reset sau khi lưu) -> đồng bộ lại lựa chọn
+  // trong bảng. Không làm thì bảng vẫn tô ngày cũ và lần chọn kế tiếp ghép nhầm với ngày đó.
+  useEffect(() => {
+    const next = parseValue(value, mode);
+    if (next) {
+      setSel(next);
+      if (mode !== "time") setCursor(new Date(next.year, next.month - 1, 1));
+    } else {
+      setSel({ day: null, month: null, year: null, hour: null, minute: 0 });
+      setHint("");
+    }
+  }, [value, mode]);
+
+  const clear = () => {
+    onChange("");
+    setSel({ day: null, month: null, year: null, hour: null, minute: 0 });
+    setHint("");
+    setOpen(false); // đóng bảng để thấy rõ ô đã trống trở lại
+  };
 
   const apply = (next) => {
     setSel(next);
@@ -86,15 +108,21 @@ export default function DateTimeField({ value, onChange, mode = "datetime", plac
 
   return (
     <View>
-      <TouchableOpacity
-        onPress={() => setOpen((o) => !o)}
-        style={[styles.field, { borderBottomColor: c.line }]}
-      >
-        <Text style={[styles.fieldText, { color: value ? c.ink : c.inkSoft }]}>
-          {value || placeholder || (mode === "date" ? "Chọn ngày" : mode === "time" ? "Chọn giờ" : "Chọn ngày giờ")}
-        </Text>
-        <Feather name={open ? "chevron-up" : mode === "time" ? "clock" : "calendar"} size={15} color={c.primary} />
-      </TouchableOpacity>
+      <View style={[styles.field, { borderBottomColor: c.line }]}>
+        <TouchableOpacity onPress={() => setOpen((o) => !o)} style={styles.fieldMain}>
+          <Text style={[styles.fieldText, { color: value ? c.ink : c.inkSoft }]}>
+            {value || placeholder || (mode === "date" ? "Chọn ngày" : mode === "time" ? "Chọn giờ" : "Chọn ngày giờ")}
+          </Text>
+        </TouchableOpacity>
+        {clearable && !!value && (
+          <TouchableOpacity onPress={clear} hitSlop={10} style={styles.fieldIcon}>
+            <Feather name="x" size={15} color={c.inkSoft} />
+          </TouchableOpacity>
+        )}
+        <TouchableOpacity onPress={() => setOpen((o) => !o)} hitSlop={8} style={styles.fieldIcon}>
+          <Feather name={open ? "chevron-up" : mode === "time" ? "clock" : "calendar"} size={15} color={c.primary} />
+        </TouchableOpacity>
+      </View>
 
       {open && (
         <View style={[styles.panel, { borderColor: c.line, backgroundColor: c.card }]}>
@@ -207,6 +235,8 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between",
   },
+  fieldMain: { flex: 1 },
+  fieldIcon: { paddingLeft: 12 },
   fieldText: { fontSize: 15 },
   panel: { borderWidth: 1, borderRadius: 14, padding: 12, marginTop: 10 },
   monthNav: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 8 },

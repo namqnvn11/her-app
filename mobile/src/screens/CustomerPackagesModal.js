@@ -367,6 +367,9 @@ export default function CustomerPackagesModal({ customer, onClose }) {
           <DateTimeField
             mode="date"
             value={form.expiresOn}
+            // her-44: gói BUỔI được để trống -> chọn nhầm còn bỏ được bằng ✕.
+            // Gói THỜI HẠN bắt buộc có hạn nên không cho xoá.
+            clearable={form.kind !== "duration"}
             placeholder={form.kind === "duration" ? "Bấm để chọn ngày" : "Không thời hạn — bấm để chọn ngày"}
             onChange={(v) => setForm((f) => ({ ...f, expiresOn: v }))}
           />

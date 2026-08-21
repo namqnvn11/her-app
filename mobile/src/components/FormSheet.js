@@ -12,7 +12,7 @@ export default function FormSheet({ visible, title, onClose, children }) {
       <Pressable style={[styles.backdrop, { backgroundColor: c.overlay }]} onPress={onClose} />
       <View style={[styles.sheet, { backgroundColor: c.card }]}>
         <View style={[styles.grabber, { backgroundColor: c.line }]} />
-        <Text style={[styles.title, { color: c.ink }]}>{title}</Text>
+        {!!title && <Text style={[styles.title, { color: c.ink }]}>{title}</Text>}
         <ScrollView keyboardShouldPersistTaps="handled">{children}</ScrollView>
       </View>
     </Modal>

@@ -22,8 +22,16 @@ export function AuthProvider({ children }) {
         setAuthToken(saved);
         tokenRef.current = saved;
         try {
-          const { user, config } = await api.get("/me");
-          setToken(saved);
+          // her-45: /me có thể trả kèm `token` MỚI (gia hạn trượt) — lưu đè thì phiên tính
+          // lại 30 ngày từ lần mở app này. Không có field đó = chưa tới lúc gia hạn.
+          const { user, config, token: renewed } = await api.get("/me");
+          const active = renewed || saved;
+          if (renewed) {
+            await AsyncStorage.setItem(STORAGE_KEY, renewed);
+            setAuthToken(renewed);
+            tokenRef.current = renewed;
+          }
+          setToken(active);
           setUser(user);
           setConfig(config || null);
           // Lễ tân/admin không dùng nhắc lịch — dọn thông báo còn sót của người dùng trước (B1)
@@ -72,8 +80,15 @@ export function AuthProvider({ children }) {
   }, []);
 
   const refreshMe = useCallback(async () => {
-    const { user, config } = await api.get("/me");
+    const { user, config, token: renewed } = await api.get("/me");
     if (!tokenRef.current) return null; // đã logout trong lúc fetch — bỏ kết quả, không "hồi sinh" user
+    // Gia hạn trượt cũng áp ở đây (her-45) — nhưng chỉ khi phiên còn sống, không cứu phiên đã logout
+    if (renewed) {
+      await AsyncStorage.setItem(STORAGE_KEY, renewed);
+      setAuthToken(renewed);
+      tokenRef.current = renewed;
+      setToken(renewed);
+    }
     setUser(user);
     if (config) setConfig(config);
     return user;

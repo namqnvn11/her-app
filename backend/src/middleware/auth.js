@@ -26,6 +26,7 @@ async function requireAuth(req, res, next) {
       return res.status(401).json({ error: "Mật khẩu đã được thay đổi — vui lòng đăng nhập lại" });
     }
     req.user = user;
+    req.tokenPayload = payload; // her-45: route /me dựa vào `iat` để quyết định có gia hạn không
     next();
   } catch (err) {
     next(err);

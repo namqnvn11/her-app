@@ -10,7 +10,7 @@ export default function TimeRow({ time, sub, title, meta, right, children, last 
       <View style={styles.row}>
         <View style={styles.timeCol}>
           <Text style={[styles.time, { color: c.primary }]}>{time}</Text>
-          {!!sub && <Text style={[styles.sub, { color: c.inkSoft }]}>{sub}</Text>}
+          {!!sub && <Text numberOfLines={1} style={[styles.sub, { color: c.inkSoft }]}>{sub}</Text>}
         </View>
         <View style={{ flex: 1 }}>
           <Text style={[styles.title, { color: c.ink }]}>{title}</Text>
@@ -26,10 +26,10 @@ export default function TimeRow({ time, sub, title, meta, right, children, last 
 const styles = StyleSheet.create({
   wrap: { paddingVertical: 14 },
   row: { flexDirection: "row", gap: 14, alignItems: "center" },
-  timeCol: { width: 46 },
+  timeCol: { width: 58 },
   time: { fontSize: 13, fontWeight: "800" },
   sub: { fontSize: 10.5, fontWeight: "500", marginTop: 1 },
   title: { fontSize: 13.5, fontWeight: "700" },
   meta: { fontSize: 11.5, marginTop: 2 },
-  children: { marginTop: 10, marginLeft: 60 },
+  children: { marginTop: 10, marginLeft: 72 },
 });

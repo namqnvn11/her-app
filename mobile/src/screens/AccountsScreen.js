@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { View, Text, ScrollView, TextInput, TouchableOpacity, StyleSheet, RefreshControl } from "react-native";
-import { useFocusEffect } from "@react-navigation/native";
+import { useFocusEffect, useNavigation, useRoute } from "@react-navigation/native";
 import { Feather } from "@expo/vector-icons";
 import TopBar from "../components/TopBar";
 import AppButton from "../components/AppButton";
@@ -37,6 +37,14 @@ const MANAGEABLE_ROLES = {
 
 const ROLE_LABEL = { admin: "Admin", reception: "Lễ tân", trainer: "Nhân viên", customer: "Học viên" };
 
+// her-43: bộ lọc nhận từ khối "Cần xử lý" của màn Tổng quan — key khớp `flag` của server
+const FLAG_LABEL = { debt: "còn nợ tiền gói", expiring: "gói sắp hết hạn" };
+const money = (n) => (n || 0).toLocaleString("vi-VN") + "đ";
+const fmtDate = (d) => {
+  const x = new Date(d);
+  return `${String(x.getDate()).padStart(2, "0")}/${String(x.getMonth() + 1).padStart(2, "0")}`;
+};
+
 // Mật khẩu ngẫu nhiên dễ đọc cho khách (bỏ ký tự dễ nhầm 0/O, 1/l...)
 function randomPassword() {
   const chars = "abcdefghjkmnpqrstuvwxyz23456789";
@@ -48,8 +56,12 @@ function randomPassword() {
 export default function AccountsScreen() {
   const { user } = useAuth();
   const { c } = useTheme();
+  const navigation = useNavigation();
+  const route = useRoute();
   const options = MANAGEABLE_ROLES[user?.role] || [];
   const [role, setRole] = useState(options[0]?.key || "customer");
+  // her-43: "debt" | "expiring" | null — lọc sẵn theo dòng vừa bấm ở màn Tổng quan
+  const [flag, setFlag] = useState(null);
   const [accounts, setAccounts] = useState([]);
   // her-23: ô tìm theo tên / SĐT — lọc NGAY khi gõ, không phân biệt hoa thường/dấu,
   // áp cho tab đang xem (học viên, HLV, lễ tân đều tìm được)
@@ -87,24 +99,39 @@ export default function AccountsScreen() {
   }, []);
   const [busy, setBusy] = useState(false); // chặn bấm đúp tạo/khoá/cấp lại mật khẩu
 
-  const load = useCallback(async (r = role) => {
+  // Có bộ lọc thì luôn hỏi server theo học viên + flag (server là nơi quyết định ai vào danh sách)
+  const load = useCallback(async (r, f) => {
     setLoading(true); // để RefreshControl hiện spinner đúng lúc kéo làm mới
     try {
       setErrorMsg("");
-      const res = await api.get("/accounts", { role: r });
+      const res = await api.get("/accounts", f ? { role: "customer", flag: f } : { role: r });
       setAccounts(res.accounts);
     } catch (err) {
       setErrorMsg(err.message);
     } finally {
       setLoading(false);
     }
-  }, [role]);
+  }, []);
+
+  // her-43: màn Tổng quan điều hướng sang kèm { flag } -> bật bộ lọc rồi XOÁ param ngay,
+  // không thì mỗi lần quay lại tab là param cũ tự áp lại (kể cả sau khi đã bấm ✕ bỏ lọc).
+  // Bộ lọc vẫn GIỮ khi rời tab rồi quay lại — chip luôn hiện nên người dùng thấy và bấm ✕ được.
+  const paramFlag = route.params?.flag;
+  useEffect(() => {
+    if (!paramFlag) return;
+    setRole("customer");
+    setSearch("");
+    setSelectedId(null);
+    setResetInfo(null);
+    setFlag(paramFlag);
+    navigation.setParams({ flag: undefined });
+  }, [paramFlag, navigation]);
 
   useFocusEffect(
     useCallback(() => {
-      load(role);
+      load(role, flag);
       // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [role])
+    }, [role, flag])
   );
 
   // Clear timer cũ để toast lỗi không bị toast trước đó "giết non" giữa chừng
@@ -117,6 +144,7 @@ export default function AccountsScreen() {
 
   const changeRole = (r) => {
     setRole(r);
+    setFlag(null); // đổi tab là xem lại toàn bộ vai trò đó, không giữ bộ lọc của màn Tổng quan
     setSelectedId(null);
     setResetInfo(null);
     // Chuỗi tìm của tab cũ mà giữ sang tab mới thì hiện "không khớp" khó hiểu (review V1)
@@ -215,7 +243,7 @@ export default function AccountsScreen() {
       flash(`Đã tạo tài khoản ${ROLE_LABEL[role]}`);
       setForm({ name: "", phone: "", password: "", specialties: [] });
       setSheetOpen(false);
-      load(role);
+      load(role, flag);
     } catch (err) {
       setSheetError(err.message); // hiện trong sheet — không để lỗi chìm sau Modal
     } finally {
@@ -230,7 +258,7 @@ export default function AccountsScreen() {
     setBusy(true);
     try {
       await api.patch(`/accounts/${acc.id}`, { isActive: !acc.isActive });
-      load(role);
+      load(role, flag);
     } catch (err) {
       flash(err.message, true);
     } finally {
@@ -320,17 +348,32 @@ export default function AccountsScreen() {
             </TouchableOpacity>
           ))}
         </View>
+        {/* her-43: đang lọc theo dòng vừa bấm ở màn Tổng quan — bấm ✕ để xem lại đủ danh sách */}
+        {!!flag && (
+          <TouchableOpacity
+            activeOpacity={0.7}
+            onPress={() => setFlag(null)}
+            style={[styles.filterChip, { backgroundColor: c.primaryTint }]}
+          >
+            <Text style={[styles.filterChipText, { color: c.primary }]}>{`Đang lọc: ${FLAG_LABEL[flag]}`}</Text>
+            <Feather name="x" size={13} color={c.primary} />
+          </TouchableOpacity>
+        )}
       </View>
 
       {!!errorMsg && <Text style={[styles.error, { color: c.danger }]}>{errorMsg}</Text>}
 
       <ScrollView
         contentContainerStyle={{ paddingHorizontal: 22, paddingBottom: 110 }}
-        refreshControl={<RefreshControl refreshing={loading} onRefresh={() => load(role)} tintColor={c.primary} />}
+        refreshControl={<RefreshControl refreshing={loading} onRefresh={() => load(role, flag)} tintColor={c.primary} />}
       >
         {visible.length === 0 && !loading && (
           <Text style={[styles.empty, { color: c.inkSoft }]}>
-            {q ? "Không có tài khoản nào khớp tìm kiếm." : "Chưa có tài khoản nào."}
+            {q
+              ? "Không có tài khoản nào khớp tìm kiếm."
+              : flag
+                ? `Không còn khách ${FLAG_LABEL[flag]}.`
+                : "Chưa có tài khoản nào."}
           </Text>
         )}
         {visible.map((a, i) => (
@@ -354,7 +397,15 @@ export default function AccountsScreen() {
               </View>
               <View style={{ flex: 1 }}>
                 <Text style={[styles.rowTitle, { color: c.ink }]}>{a.name}</Text>
-                <Text style={[styles.rowMeta, { color: c.inkSoft }]}>{a.phone}</Text>
+                <Text style={[styles.rowMeta, { color: c.inkSoft }]}>
+                  {[
+                    a.phone,
+                    a.debt ? `nợ ${money(a.debt)}` : null,
+                    a.expiringAt ? `hết hạn ${fmtDate(a.expiringAt)}` : null,
+                  ]
+                    .filter(Boolean)
+                    .join(" · ")}
+                </Text>
               </View>
               <Text style={[styles.status, { color: a.isActive ? c.inkSoft : c.primary }]}>
                 {a.isActive ? "Hoạt động" : "Đã khoá"}
@@ -559,6 +610,17 @@ export default function AccountsScreen() {
 
 const styles = StyleSheet.create({
   tabs: { flexDirection: "row", gap: 20, borderBottomWidth: 1, marginTop: 14 },
+  filterChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    alignSelf: "flex-start",
+    gap: 6,
+    borderRadius: 99,
+    paddingVertical: 5,
+    paddingHorizontal: 11,
+    marginTop: 12,
+  },
+  filterChipText: { fontSize: 11.5, fontWeight: "700" },
   // her-23: ô tìm theo tên/SĐT — cùng kiểu với màn Lịch tập
   searchBox: {
     flexDirection: "row",

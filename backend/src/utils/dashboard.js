@@ -1,8 +1,8 @@
 const Booking = require("../models/Booking");
 const GymClass = require("../models/GymClass");
 const Package = require("../models/Package");
-const User = require("../models/User");
 const { computeMonth } = require("./payroll");
+const { debtCustomers, expiringPackages, EXPIRING_DAYS } = require("./customerFlags");
 
 // ---- Số liệu màn Tổng quan (mục 8) ----
 // Định nghĩa chốt trong plan her-13 (tóm tắt tại testcase_her-13):
@@ -177,27 +177,16 @@ async function receptionDashboard(now = new Date()) {
     .filter((c) => c.endAt > now)
     .reduce((t, c) => t + Math.max(c.capacity - c.bookedCount, 0), 0);
 
-  // Khách còn nợ — đếm theo KHÁCH, bỏ tài khoản ĐÃ KHOÁ (review V4: khách khoá không giao dịch nữa)
-  const debtPkgs = await Package.find({ paidAmount: { $ne: null }, $expr: { $lt: ["$paidAmount", "$price"] } }).select("userId");
-  const debtUserIds = [...new Set(debtPkgs.map((p) => p.userId.toString()))];
-  const unpaid = await User.countDocuments({ _id: { $in: debtUserIds }, isActive: true });
+  // Khách còn nợ + gói sắp hết hạn: dùng CHUNG util với GET /accounts?flag=... (her-43)
+  // để con số ở đây và danh sách khách mở ra không bao giờ lệch nhau
+  const unpaid = (await debtCustomers()).ids.length;
+  const expiring = (await expiringPackages(now)).packageCount;
 
-  // Gói sắp hết hạn trong 7 ngày: bỏ gói bảo lưu, gói ĐÃ HẾT BUỔI, và khách bị khoá (V4)
-  const soonEnd = new Date(now.getTime() + 7 * 24 * 3600 * 1000);
-  const expPkgs = await Package.find({
-    pausedAt: null,
-    expiresAt: { $gte: now, $lte: soonEnd },
-    $or: [{ totalSessions: null }, { $expr: { $lt: ["$usedSessions", "$totalSessions"] } }],
-  }).select("userId");
-  const expUserIds = [...new Set(expPkgs.map((p) => p.userId.toString()))];
-  const activeExpUsers = new Set(
-    (await User.find({ _id: { $in: expUserIds }, isActive: true }).select("_id")).map((u) => u._id.toString())
-  );
-  const expiring = expPkgs.filter((p) => activeExpUsers.has(p.userId.toString())).length;
-
+  // her-43: `flag` là đường dẫn của dòng — app bấm vào thì mở tab Tài khoản lọc sẵn nhóm này.
+  // Dòng nào không có flag thì app KHÔNG vẽ mũi tên (không có hành động thì không gợi ý bấm).
   const todo = [];
-  if (unpaid > 0) todo.push({ title: `${unpaid} khách còn nợ tiền gói`, sub: "Mở thẻ khách → Gói tập & thanh toán để thu" });
-  if (expiring > 0) todo.push({ title: `${expiring} gói sắp hết hạn trong 7 ngày`, sub: "Gọi mời khách gia hạn sớm" });
+  if (unpaid > 0) todo.push({ title: `${unpaid} khách còn nợ tiền gói`, sub: "Mở thẻ khách → Gói tập & thanh toán để thu", flag: "debt" });
+  if (expiring > 0) todo.push({ title: `${expiring} gói sắp hết hạn trong ${EXPIRING_DAYS} ngày`, sub: "Gọi mời khách gia hạn sớm", flag: "expiring" });
 
   return {
     classesToday: classes.length,
@@ -246,8 +235,10 @@ async function trainerDashboard(trainerId, now = new Date()) {
 
   const weekMs = weekSessions.reduce((t, s) => t + (new Date(s.endAt) - new Date(s.startAt)), 0);
   const upcoming = todaySessions.filter((s) => new Date(s.endAt) > now);
+  // startAt: app ghi thêm nhãn thứ/ngày ("T2-24/08") dưới giờ — chỉ thấy "07:00" thì
+  // HLV không biết buổi rơi vào ngày nào (góp ý 21/08)
   const next = upcoming[0]
-    ? { time: fmtTime(upcoming[0].startAt), title: upcoming[0].title, format: upcoming[0].format || "", customers: upcoming[0].customers, classId: upcoming[0].classId }
+    ? { time: fmtTime(upcoming[0].startAt), startAt: upcoming[0].startAt, title: upcoming[0].title, format: upcoming[0].format || "", customers: upcoming[0].customers, classId: upcoming[0].classId }
     : null;
   const rest = upcoming.slice(1).map((s) => ({ time: fmtTime(s.startAt), title: s.title, format: s.format || "", sub: `${s.customers.length} khách` }));
 

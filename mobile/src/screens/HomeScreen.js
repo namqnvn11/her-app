@@ -1,7 +1,6 @@
 import { useState, useCallback } from "react";
 import { View, Text, ScrollView, TouchableOpacity, StyleSheet, RefreshControl } from "react-native";
 import { useFocusEffect, useNavigation } from "@react-navigation/native";
-import { Feather } from "@expo/vector-icons";
 import HeaderBlock from "../components/HeaderBlock";
 import SectionLabel from "../components/SectionLabel";
 import { useAuth } from "../context/AuthContext";
@@ -9,6 +8,7 @@ import { api } from "../api/client";
 import { syncReminders } from "../utils/reminders";
 import { classTitle } from "../utils/displayName";
 import { packageLabel } from "../utils/formats";
+import { dayLabelOrToday } from "../utils/dayLabel";
 import { useTheme } from "../theme";
 
 function fmtDate(d) {
@@ -19,15 +19,20 @@ function fmtDate(d) {
 }
 function fmtDateTime(d) {
   const date = new Date(d);
-  const dd = String(date.getDate()).padStart(2, "0");
-  const mm = String(date.getMonth() + 1).padStart(2, "0");
   const time = date.toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" });
-  return `${dd}/${mm} ${time}`;
+  // Có THỨ ở đầu ("T2-24/08 07:00") — nhìn là biết ngay buổi rơi vào thứ mấy
+  return `${dayLabelOrToday(date)} ${time}`;
 }
+// Số ngày còn hạn. Gói KHÔNG thời hạn (Q3) trả null -> ô "ngày còn hạn" ẩn hẳn
+// (góp ý 21/08: hiện "∞" khó hiểu hơn là không hiện gì)
 function daysLeft(d) {
-  if (!d) return "∞"; // gói không thời hạn (Q3)
+  if (!d) return null;
   return Math.max(Math.ceil((new Date(d).getTime() - Date.now()) / 86400000), 0);
 }
+
+// Ngưỡng "sắp hết" của dòng nhắc gia hạn (góp ý 21/08 — lúc nào cũng nhắc thì thành chữ thừa)
+const LOW_SESSIONS = 6; // còn từ 6 buổi trở xuống
+const LOW_DAYS = 15; // hoặc còn dưới 15 ngày
 
 export default function HomeScreen() {
   const { user } = useAuth();
@@ -82,6 +87,12 @@ export default function HomeScreen() {
   // Gói không giới hạn buổi: totalSessions null (Q3) — hiện ∞ thay vì NaN
   const unlimited = pkg && pkg.totalSessions == null;
   const left = pkg && !unlimited ? Math.max(pkg.totalSessions - pkg.usedSessions, 0) : 0;
+  const expiryDays = pkg ? daysLeft(pkg.expiresAt) : null;
+  // Chỉ nhắc gia hạn khi gói THỰC SỰ sắp hết — hết buổi hoặc sắp hết hạn
+  const runningLow =
+    !!pkg &&
+    pkg.status !== "paused" &&
+    ((!unlimited && left <= LOW_SESSIONS) || (expiryDays != null && expiryDays < LOW_DAYS));
 
   return (
     <ScrollView
@@ -94,7 +105,8 @@ export default function HomeScreen() {
         title={`Chào ${user?.name || ""}`}
         stats={[
           { value: pkg ? (unlimited ? "∞" : left) : "—", label: "buổi còn lại" },
-          { value: pkg ? daysLeft(pkg.expiresAt) : "—", label: "ngày còn hạn" },
+          // Gói không thời hạn thì bỏ hẳn ô này (không hiện "∞")
+          ...(pkg && expiryDays == null ? [] : [{ value: pkg ? expiryDays : "—", label: "ngày còn hạn" }]),
           { value: bookings.length, label: "lịch sắp tới" },
         ]}
         progress={pkg && !unlimited && pkg.totalSessions > 0 ? pkg.usedSessions / pkg.totalSessions : undefined}
@@ -126,7 +138,6 @@ export default function HomeScreen() {
               <Text style={[styles.rowTitle, { color: c.ink }]}>{classTitle(b)}</Text>
               <Text style={[styles.rowMeta, { color: c.inkSoft }]}>{fmtDateTime(b.startAt)}</Text>
             </View>
-            <Feather name="chevron-right" size={16} color={c.inkSoft} />
           </View>
         ))}
 
@@ -137,11 +148,15 @@ export default function HomeScreen() {
             </Text>
           </View>
         )}
-        {pkg && pkg.status !== "paused" && (
+        {runningLow && (
           <View style={[styles.note, { backgroundColor: c.primarySoft }]}>
             <Text style={[styles.noteText, { color: c.primary }]}>
-              {unlimited ? "Gói của bạn không giới hạn buổi" : `Gói của bạn còn ${left} buổi`}
-              {pkg.expiresAt ? `, hết hạn ${fmtDate(pkg.expiresAt)}. Ghé quầy để gia hạn sớm nhé.` : " và không có thời hạn."}
+              {`Gói của bạn ${[
+                unlimited ? null : `còn ${left} buổi`,
+                pkg.expiresAt ? `hết hạn ${fmtDate(pkg.expiresAt)}` : null,
+              ]
+                .filter(Boolean)
+                .join(", ")}. Ghé quầy để gia hạn sớm nhé.`}
             </Text>
           </View>
         )}
