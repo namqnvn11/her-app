@@ -110,7 +110,7 @@ export default function DashboardScreen() {
     <ScrollView
       style={{ flex: 1, backgroundColor: c.bg }}
       contentContainerStyle={{ paddingBottom: 40 }}
-      refreshControl={<RefreshControl refreshing={loading} onRefresh={() => { load(); loadPayroll(); }} tintColor={c.primary} />}
+      refreshControl={<RefreshControl refreshing={loading} onRefresh={() => { load(); loadPayroll(); }} tintColor={c.accent} />}
     >
       {/* Mẫu 11: dashboard Admin KHÔNG có header màu — tiêu đề thường */}
       {isAdmin && (
@@ -122,10 +122,10 @@ export default function DashboardScreen() {
               <TouchableOpacity
                 activeOpacity={0.7}
                 onPress={() => setMonthSheet(true)}
-                style={[styles.repPill, { borderColor: c.primary }]}
+                style={[styles.repPill, { borderColor: c.accent }]}
               >
                 <Text style={[styles.repMonthText, { color: c.ink }]}>{`T${repMonth.m}/${repMonth.y}`}</Text>
-                <Feather name="chevron-down" size={13} color={c.primary} />
+                <Feather name="chevron-down" size={13} color={c.accent} />
               </TouchableOpacity>
             }
           />
@@ -168,7 +168,7 @@ export default function DashboardScreen() {
         {isAdmin && data && (
           <>
             <SectionLabel>Doanh thu bán gói</SectionLabel>
-            <Text style={[styles.big, { color: c.primary }]}>{money(data.revenue)}</Text>
+            <Text style={[styles.big, { color: c.accent }]}>{money(data.revenue)}</Text>
             {!!data.packagesSold && (
               <Text style={[styles.bigSub, { color: c.inkSoft }]}>
                 {data.packagesSold} gói bán ra
@@ -193,7 +193,7 @@ export default function DashboardScreen() {
               <View key={h.time} style={styles.barRow}>
                 <Text style={[styles.barTime, { color: c.ink }]}>{h.time}</Text>
                 <View style={[styles.track, { backgroundColor: c.primaryTint }]}>
-                  <View style={[styles.fill, { width: `${Math.round(h.rate * 100)}%`, backgroundColor: c.primary }]} />
+                  <View style={[styles.fill, { width: `${Math.round(h.rate * 100)}%`, backgroundColor: c.accent }]} />
                 </View>
                 <Text style={[styles.barPct, { color: c.inkSoft }]}>{Math.round(h.rate * 100)}%</Text>
               </View>
@@ -208,7 +208,7 @@ export default function DashboardScreen() {
                     {t.sessions} buổi · {Math.round((t.attendance || 0) * 100)}% điểm danh
                   </Text>
                 </View>
-                <Text style={[styles.payValue, { color: c.primary }]}>{short(t.pay)}</Text>
+                <Text style={[styles.payValue, { color: c.accent }]}>{short(t.pay)}</Text>
               </View>
             ))}
           </>
@@ -236,7 +236,7 @@ export default function DashboardScreen() {
               ))}
             <View style={[styles.payRow, { borderBottomColor: c.hairline }]}>
               <Text style={[styles.payName, { color: c.ink }]}>Tổng nhận</Text>
-              <Text style={[styles.payValue, { color: c.primary }]}>{money(myPay.entry.total)}</Text>
+              <Text style={[styles.payValue, { color: c.accent }]}>{money(myPay.entry.total)}</Text>
             </View>
             <Text style={[styles.closedNote, { color: c.inkSoft }]}>
               Chỉ tính buổi có khách được điểm danh Đến thật. Mức áp theo ngày buổi diễn ra.
@@ -279,7 +279,7 @@ export default function DashboardScreen() {
             )}
             {typeof data.attendanceRate === "number" && (
               <View style={[styles.note, { backgroundColor: c.primarySoft }]}>
-                <Text style={[styles.noteText, { color: c.primary }]}>
+                <Text style={[styles.noteText, { color: c.accent }]}>
                   Tỉ lệ khách đến lớp của bạn tháng này: {Math.round(data.attendanceRate * 100)}%
                 </Text>
               </View>
@@ -298,7 +298,7 @@ export default function DashboardScreen() {
                 title={classTitle({ name: t.title, format: t.format, coach: t.coach })}
                 last={i === arr.length - 1}
                 right={
-                  <Text style={{ fontSize: 12, fontWeight: "700", color: t.booked >= t.capacity ? c.primary : c.ink }}>
+                  <Text style={{ fontSize: 12, fontWeight: "700", color: t.booked >= t.capacity ? c.accent : c.ink }}>
                     {t.booked >= t.capacity ? "Đầy" : `${t.booked}/${t.capacity}`}
                   </Text>
                 }

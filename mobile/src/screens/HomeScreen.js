@@ -98,7 +98,7 @@ export default function HomeScreen() {
     <ScrollView
       style={{ flex: 1, backgroundColor: c.bg }}
       contentContainerStyle={{ paddingBottom: 40 }}
-      refreshControl={<RefreshControl refreshing={loading} onRefresh={load} tintColor={c.primary} />}
+      refreshControl={<RefreshControl refreshing={loading} onRefresh={load} tintColor={c.accent} />}
     >
       <HeaderBlock
         eyebrow={new Date().toLocaleDateString("vi-VN", { weekday: "long", day: "2-digit", month: "2-digit" })}
@@ -143,14 +143,14 @@ export default function HomeScreen() {
 
         {pkg && pkg.status === "paused" && (
           <View style={[styles.note, { backgroundColor: c.primarySoft }]}>
-            <Text style={[styles.noteText, { color: c.primary }]}>
+            <Text style={[styles.noteText, { color: c.accent }]}>
               Gói của bạn đang bảo lưu — ghé quầy lễ tân để mở lại, thời hạn sẽ được cộng bù.
             </Text>
           </View>
         )}
         {runningLow && (
           <View style={[styles.note, { backgroundColor: c.primarySoft }]}>
-            <Text style={[styles.noteText, { color: c.primary }]}>
+            <Text style={[styles.noteText, { color: c.accent }]}>
               {`Gói của bạn ${[
                 unlimited ? null : `còn ${left} buổi`,
                 pkg.expiresAt ? `hết hạn ${fmtDate(pkg.expiresAt)}` : null,
@@ -162,7 +162,7 @@ export default function HomeScreen() {
         )}
         {!pkg && !loading && (
           <View style={[styles.note, { backgroundColor: c.primarySoft }]}>
-            <Text style={[styles.noteText, { color: c.primary }]}>
+            <Text style={[styles.noteText, { color: c.accent }]}>
               Bạn chưa có gói tập còn hiệu lực — liên hệ quầy lễ tân để mua gói.
             </Text>
           </View>

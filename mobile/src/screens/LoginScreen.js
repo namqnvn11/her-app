@@ -32,7 +32,7 @@ export default function LoginScreen() {
     >
       <View style={{ alignItems: "center", marginBottom: 38 }}>
         <Svg width={92} height={92} viewBox="0 0 1000 1000">
-          <Circle cx="500" cy="500" r="430" fill="none" stroke={COLORS.primary} strokeWidth="55" />
+          <Circle cx="500" cy="500" r="430" fill="none" stroke={COLORS.accent} strokeWidth="55" />
           <SvgText x="500" y="600" textAnchor="middle" fontSize="320" fontWeight="800" fill={COLORS.ink}>
             HER
           </SvgText>
@@ -74,7 +74,7 @@ export default function LoginScreen() {
 
 const styles = StyleSheet.create({
   wrap: { flex: 1, backgroundColor: COLORS.bg, justifyContent: "center", paddingHorizontal: 32 },
-  tagline: { marginTop: 12, fontSize: 12, letterSpacing: 3, color: COLORS.primary, fontWeight: "700" },
+  tagline: { marginTop: 12, fontSize: 12, letterSpacing: 3, color: COLORS.accent, fontWeight: "700" },
   label: { fontSize: 10.5, color: COLORS.inkSoft, fontWeight: "700", letterSpacing: 1.4, marginTop: 18 },
   // Ô nhập kiểu gạch chân theo bản thiết kế — không đóng khung
   input: {

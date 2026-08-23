@@ -5,7 +5,7 @@ const GymClass = require("../models/GymClass");
 const Package = require("../models/Package");
 const User = require("../models/User");
 const { requireAuth } = require("../middleware/auth");
-const { canCustomerCancel, MIN_CANCEL_HOURS } = require("../utils/cancelRule");
+const { canCustomerCancel, getMinCancelHours } = require("../utils/cancelRule");
 const { isTrainerLocked } = require("../utils/activeTrainers");
 const { chargeSession, packageErrorMessage } = require("../utils/packages");
 const wrap = require("../utils/asyncHandler");
@@ -227,7 +227,7 @@ router.post("/", wrap(async (req, res) => {
 }));
 
 // DELETE /api/bookings/:id
-// Khách: chỉ hủy được lịch của chính mình, và phải còn >= MIN_CANCEL_HOURS.
+// Khách: chỉ hủy được lịch của chính mình, và phải còn >= số giờ hủy tối thiểu (admin cài).
 // Staff/admin: hủy được lịch của bất kỳ khách nào, không giới hạn thời gian.
 router.delete("/:id", wrap(async (req, res) => {
   const booking = await Booking.findById(req.params.id);
@@ -244,10 +244,14 @@ router.delete("/:id", wrap(async (req, res) => {
   if (booking.status !== "booked") {
     return res.status(400).json({ error: "Lịch này không còn ở trạng thái có thể hủy" });
   }
-  if (isOwner && !isStaff && !canCustomerCancel(booking.startAt)) {
-    return res.status(403).json({
-      error: `Chỉ có thể hủy lịch trước giờ tập tối thiểu ${MIN_CANCEL_HOURS} tiếng. Vui lòng liên hệ lễ tân.`,
-    });
+  // her-47: số giờ do admin cài trong Cài đặt (DB), không còn cố định theo env
+  if (isOwner && !isStaff) {
+    const minHours = await getMinCancelHours();
+    if (!canCustomerCancel(booking.startAt, minHours)) {
+      return res.status(403).json({
+        error: `Chỉ có thể hủy lịch trước giờ tập tối thiểu ${minHours} tiếng. Vui lòng liên hệ lễ tân.`,
+      });
+    }
   }
 
   // Đổi trạng thái ATOMIC với điều kiện còn "booked" — 2 lần hủy song song thì chỉ

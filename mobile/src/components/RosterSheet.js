@@ -143,7 +143,7 @@ export default function RosterSheet({ classId, onClose, canClear = false, canCan
           >
             <View style={styles.head}>
               <View style={[styles.avatar, { backgroundColor: c.primaryTint }]}>
-                <Text style={[styles.avatarText, { color: c.primary }]}>
+                <Text style={[styles.avatarText, { color: c.accent }]}>
                   {(k.name || "?").slice(0, 1).toUpperCase()}
                 </Text>
               </View>
@@ -203,7 +203,7 @@ export default function RosterSheet({ classId, onClose, canClear = false, canCan
         hasSpot ? (
           !adding ? (
             <TouchableOpacity hitSlop={8} style={styles.addLink} onPress={openAdd}>
-              <Text style={[styles.addText, { color: c.primary }]}>＋ Thêm học viên</Text>
+              <Text style={[styles.addText, { color: c.accent }]}>＋ Thêm học viên</Text>
             </TouchableOpacity>
           ) : (
             <View style={[styles.addBox, { borderTopColor: c.hairline }]}>

@@ -210,7 +210,7 @@ export default function BookingScreen() {
   const noPackage = myPackages !== null && activePkgs.length === 0;
 
   const chipStyle = (on) => [styles.chip, { borderColor: on ? c.primaryTint : c.line }, on && { backgroundColor: c.primaryTint }];
-  const chipTextStyle = (on) => [styles.chipText, { color: on ? c.primary : c.ink }];
+  const chipTextStyle = (on) => [styles.chipText, { color: on ? c.accent : c.ink }];
 
   return (
     <View style={{ flex: 1, backgroundColor: c.bg }}>
@@ -221,11 +221,11 @@ export default function BookingScreen() {
       {noPackage ? (
         <ScrollView
           contentContainerStyle={{ paddingHorizontal: 22, paddingTop: 8 }}
-          refreshControl={<RefreshControl refreshing={loading} onRefresh={load} tintColor={c.primary} />}
+          refreshControl={<RefreshControl refreshing={loading} onRefresh={load} tintColor={c.accent} />}
         >
           <View style={[styles.noPkg, { backgroundColor: c.primarySoft }]}>
-            <Feather name="info" size={18} color={c.primary} />
-            <Text style={[styles.noPkgText, { color: c.primary }]}>
+            <Feather name="info" size={18} color={c.accent} />
+            <Text style={[styles.noPkgText, { color: c.accent }]}>
               {hasPausedOnly
                 ? "Gói của bạn đang bảo lưu — ghé quầy lễ tân để mở lại là đặt lịch được ngay."
                 : "Bạn chưa có gói tập còn hiệu lực. Ghé quầy lễ tân để mua gói — có gói là màn này sẽ hiện đúng buổi bạn đặt được."}
@@ -293,7 +293,7 @@ export default function BookingScreen() {
 
           <ScrollView
             contentContainerStyle={{ paddingHorizontal: 22, paddingBottom: 100 }}
-            refreshControl={<RefreshControl refreshing={loading} onRefresh={load} tintColor={c.primary} />}
+            refreshControl={<RefreshControl refreshing={loading} onRefresh={load} tintColor={c.accent} />}
           >
             {/* Chỉ khẳng định "ngày trống" khi ĐÃ tải được dữ liệu — lỗi mạng lần đầu thì
                 errorMsg ở trên nói lý do, không hiện empty-state sai sự thật (review N1) */}
@@ -363,7 +363,7 @@ export default function BookingScreen() {
               <View style={styles.cRowLast}>
                 <Text style={[styles.cLabel, { color: c.inkSoft }]}>Trừ vào gói</Text>
                 {pkg ? (
-                  <Text style={[styles.cValue, { color: c.primary }]}>
+                  <Text style={[styles.cValue, { color: c.accent }]}>
                     {pkg.name}
                     {pkg.remainingSessions == null ? " · không giới hạn buổi" : ` · còn ${pkg.remainingSessions} buổi`}
                   </Text>
@@ -383,7 +383,7 @@ export default function BookingScreen() {
       </FormSheet>
 
       {!!toast && (
-        <View style={[styles.toast, { backgroundColor: toast.isError ? c.danger : c.primary }]}>
+        <View style={[styles.toast, { backgroundColor: toast.isError ? c.danger : c.accent }]}>
           <Feather name={toast.isError ? "alert-circle" : "check"} size={14} color="#fff" />
           <Text style={styles.toastText}>{toast.msg}</Text>
         </View>

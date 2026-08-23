@@ -8,8 +8,8 @@ export default function AppButton({ children, onPress, variant = "primary", disa
   const isOutline = variant === "outline";
 
   const backgroundColor = disabled ? c.line : isPrimary ? c.primary : "transparent";
-  const borderColor = isOutline ? c.primary : c.line;
-  const color = disabled ? c.inkSoft : isPrimary ? c.primaryOn : isOutline ? c.primary : c.ink;
+  const borderColor = isOutline ? c.accent : c.line;
+  const color = disabled ? c.inkSoft : isPrimary ? c.primaryOn : isOutline ? c.accent : c.ink;
 
   return (
     <TouchableOpacity

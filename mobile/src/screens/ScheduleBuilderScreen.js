@@ -622,13 +622,13 @@ export default function ScheduleBuilderScreen() {
             <TouchableOpacity
               key={key}
               onPress={() => changeTab(key)}
-              style={[styles.tabBtn, tab === key && { borderBottomWidth: 2.5, borderBottomColor: c.primary }]}
+              style={[styles.tabBtn, tab === key && { borderBottomWidth: 2.5, borderBottomColor: c.accent }]}
             >
               <View style={{ flexDirection: "row", alignItems: "center", gap: 5 }}>
                 {key === "past" && (
-                  <Feather name="clock" size={12} color={tab === key ? c.primary : c.inkSoft} />
+                  <Feather name="clock" size={12} color={tab === key ? c.accent : c.inkSoft} />
                 )}
-                <Text style={[styles.tabLabel, { color: tab === key ? c.primary : c.inkSoft }]}>{label}</Text>
+                <Text style={[styles.tabLabel, { color: tab === key ? c.accent : c.inkSoft }]}>{label}</Text>
               </View>
             </TouchableOpacity>
           ))}
@@ -640,7 +640,7 @@ export default function ScheduleBuilderScreen() {
       <ScrollView
         ref={scrollRef}
         contentContainerStyle={{ paddingHorizontal: 22, paddingBottom: 110 }}
-        refreshControl={<RefreshControl refreshing={loading} onRefresh={() => load(tab)} tintColor={c.primary} />}
+        refreshControl={<RefreshControl refreshing={loading} onRefresh={() => load(tab)} tintColor={c.accent} />}
         // her-26: lướt xuống cuối là tự tải trang lịch sử kế tiếp — không bắt bấm nút
         scrollEventThrottle={100}
         onScroll={({ nativeEvent: { layoutMeasurement, contentOffset, contentSize } }) => {
@@ -684,13 +684,13 @@ export default function ScheduleBuilderScreen() {
                         onPress={() => { closeAllSheets(); setRoster({ classId: r.classId }); }}
                         hitSlop={8}
                       >
-                        <Text style={[styles.deleteLink, { color: c.primary }]}>Danh sách khách</Text>
+                        <Text style={[styles.deleteLink, { color: c.accent }]}>Danh sách khách</Text>
                       </TouchableOpacity>
                     )}
                     {/* item = còn trong cửa sổ tải (buổi trước hôm nay chỉ xem danh sách) */}
                     {!!r.item && !r.ended && (
                       <TouchableOpacity disabled={busy} onPress={() => openEdit(r.item)} hitSlop={8}>
-                        <Text style={[styles.deleteLink, { color: c.primary }]}>Sửa</Text>
+                        <Text style={[styles.deleteLink, { color: c.accent }]}>Sửa</Text>
                       </TouchableOpacity>
                     )}
                     {/* Chỉ buổi chưa có khách mới xoá được (atomic ở server — C7) */}
@@ -706,7 +706,7 @@ export default function ScheduleBuilderScreen() {
         ))}
 
         {/* her-26: không còn nút Tải thêm — cuộn là tự tải, chỉ hiện vòng xoay khi đang tải */}
-        {loadingMore && <ActivityIndicator style={{ marginTop: 16 }} color={c.primary} />}
+        {loadingMore && <ActivityIndicator style={{ marginTop: 16 }} color={c.accent} />}
       </ScrollView>
 
       {/* Nút nổi mở form — mẫu 10: pill trắng chữ terracotta, góc phải dưới */}
@@ -719,7 +719,7 @@ export default function ScheduleBuilderScreen() {
           setSheetOpen(true);
         }}
       >
-        <Feather name="plus" size={24} color={c.primary} />
+        <Feather name="plus" size={24} color={c.accent} />
       </TouchableOpacity>
 
       <FormSheet
@@ -747,7 +747,7 @@ export default function ScheduleBuilderScreen() {
                 form.format === key && { backgroundColor: c.primaryTint, borderColor: c.primaryTint },
               ]}
             >
-              <Text style={[styles.chipText, { color: form.format === key ? c.primary : c.ink }]}>{key}</Text>
+              <Text style={[styles.chipText, { color: form.format === key ? c.accent : c.ink }]}>{key}</Text>
             </TouchableOpacity>
           ))}
         </View>
@@ -769,7 +769,7 @@ export default function ScheduleBuilderScreen() {
                 form.discipline === key && { backgroundColor: c.primaryTint, borderColor: c.primaryTint },
               ]}
             >
-              <Text style={[styles.chipText, { color: form.discipline === key ? c.primary : c.ink }]}>{label}</Text>
+              <Text style={[styles.chipText, { color: form.discipline === key ? c.accent : c.ink }]}>{label}</Text>
             </TouchableOpacity>
           ))}
           {disciplineChips(form.format).length === 0 && (
@@ -854,7 +854,7 @@ export default function ScheduleBuilderScreen() {
                           editForm.format === key && { backgroundColor: c.primaryTint, borderColor: c.primaryTint },
                         ]}
                       >
-                        <Text style={[styles.chipText, { color: editForm.format === key ? c.primary : c.ink }]}>
+                        <Text style={[styles.chipText, { color: editForm.format === key ? c.accent : c.ink }]}>
                           {key}
                         </Text>
                       </TouchableOpacity>
@@ -881,7 +881,7 @@ export default function ScheduleBuilderScreen() {
                           editForm.discipline === key && { backgroundColor: c.primaryTint, borderColor: c.primaryTint },
                         ]}
                       >
-                        <Text style={[styles.chipText, { color: editForm.discipline === key ? c.primary : c.ink }]}>
+                        <Text style={[styles.chipText, { color: editForm.discipline === key ? c.accent : c.ink }]}>
                           {label}
                         </Text>
                       </TouchableOpacity>
@@ -972,7 +972,7 @@ export default function ScheduleBuilderScreen() {
       />
 
       {!!toast && (
-        <View style={[styles.toast, { backgroundColor: toast.isError ? c.danger : c.primary }]}>
+        <View style={[styles.toast, { backgroundColor: toast.isError ? c.danger : c.accent }]}>
           <Feather name={toast.isError ? "alert-circle" : "check"} size={14} color="#fff" />
           <Text style={styles.toastText}>{toast.msg}</Text>
         </View>

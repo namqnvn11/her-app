@@ -15,7 +15,7 @@ export default function TopBar({ title, sub, onBack, right }) {
       <View style={styles.titleRow}>
         {!!onBack && (
           <TouchableOpacity onPress={onBack} hitSlop={10}>
-            <Feather name="chevron-left" size={22} color={c.primary} />
+            <Feather name="chevron-left" size={22} color={c.accent} />
           </TouchableOpacity>
         )}
         <Text style={[styles.title, { color: c.ink }]} numberOfLines={1}>{title}</Text>

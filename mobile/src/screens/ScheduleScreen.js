@@ -22,10 +22,18 @@ function fmtTime(d) {
 const STATUS_LABEL = { completed: "Đã tập", cancelled: "Đã hủy", no_show: "Không đến", booked: "Đã đặt" };
 
 export default function ScheduleScreen() {
-  // Số giờ tối thiểu để tự hủy lấy từ server (MIN_CANCEL_HOURS) — không ghi cứng ở app
-  const { config } = useAuth();
+  // Số giờ tối thiểu để tự hủy lấy từ server (admin cài trong Cài đặt — her-47) — không ghi cứng ở app.
+  // Chưa nhận được config thì KHÔNG đoán số: không khoá nút, không hiện câu nhắc (server vẫn chặn đúng luật).
+  const { config, refreshMe } = useAuth();
   const { c } = useTheme();
-  const minCancelHours = config?.minCancelHours ?? 3;
+  const minCancelHours = typeof config?.minCancelHours === "number" ? config.minCancelHours : null;
+  const cancelSub =
+    minCancelHours == null ? undefined
+      : minCancelHours === 0 ? "Tự hủy được tới trước giờ tập"
+      : `Tự hủy khi còn tối thiểu ${minCancelHours} tiếng trước giờ tập`;
+  const lockedMeta = minCancelHours === 0
+    ? "Đã qua giờ tập — liên hệ lễ tân để hủy."
+    : `Còn dưới ${minCancelHours} giờ — liên hệ lễ tân để hủy.`;
   const [bookings, setBookings] = useState([]);
   const [history, setHistory] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -75,7 +83,12 @@ export default function ScheduleScreen() {
     setLoading(true);
     try {
       setErrorMsg("");
-      const upcomingRes = await api.get("/me/bookings");
+      // her-47: admin có thể vừa đổi số giờ hủy — mỗi lần tải lịch làm mới luôn config (song song,
+      // lỗi của /me không chặn danh sách; câu nhắc giữ số cũ tới lần tải sau)
+      const [upcomingRes] = await Promise.all([
+        api.get("/me/bookings"),
+        refreshMe().catch((err) => console.warn("[schedule] không làm mới được config:", err?.message)),
+      ]);
       if (seq !== loadSeq.current) return;
       // Mục 9: đặt lại nhắc-1-tiếng theo lịch mới nhất (no-op trên web)
       syncReminders((upcomingRes.bookings || []).filter((b) => b.status === "booked"));
@@ -86,7 +99,7 @@ export default function ScheduleScreen() {
       if (seq === loadSeq.current) setLoading(false);
     }
     if (histOpenRef.current) loadHistory();
-  }, [loadHistory]);
+  }, [loadHistory, refreshMe]);
 
   const toggleHistory = useCallback(() => {
     const next = !histOpenRef.current;
@@ -175,7 +188,7 @@ export default function ScheduleScreen() {
       ref={scrollRef}
       style={{ flex: 1, backgroundColor: c.bg }}
       contentContainerStyle={{ paddingBottom: 40 }}
-      refreshControl={<RefreshControl refreshing={loading} onRefresh={load} tintColor={c.primary} />}
+      refreshControl={<RefreshControl refreshing={loading} onRefresh={load} tintColor={c.accent} />}
       scrollEventThrottle={100}
       onScroll={({ nativeEvent: { layoutMeasurement, contentOffset, contentSize } }) => {
         if (!histOpen) return; // đóng thì không tự nạp thêm lịch sử
@@ -189,7 +202,7 @@ export default function ScheduleScreen() {
       onLayout={(e) => { viewH.current = e.nativeEvent.layout.height; }}
       onContentSizeChange={(w, h) => { contentH.current = h; }}
     >
-      <TopBar title="Lịch của tôi" sub={`Tự hủy khi còn tối thiểu ${minCancelHours} tiếng trước giờ tập`} />
+      <TopBar title="Lịch của tôi" sub={cancelSub} />
 
       <View style={{ paddingHorizontal: 22 }}>
         {!!errorMsg && <Text style={[styles.error, { color: c.danger }]}>{errorMsg}</Text>}
@@ -199,7 +212,7 @@ export default function ScheduleScreen() {
           <Text style={[styles.empty, { color: c.inkSoft }]}>Chưa có lịch tập nào.</Text>
         )}
         {bookings.map((b, i) => {
-          const locked = hoursUntil(b.startAt) < minCancelHours;
+          const locked = minCancelHours != null && hoursUntil(b.startAt) < minCancelHours;
           return (
             <TimeRow
               key={b.id}
@@ -210,7 +223,7 @@ export default function ScheduleScreen() {
               title={classTitle(b)}
               meta={
                 b.status === "booked" && locked
-                  ? `Còn dưới ${minCancelHours} giờ — liên hệ lễ tân để hủy.`
+                  ? lockedMeta
                   : null
               }
               last={i === bookings.length - 1}
@@ -253,7 +266,7 @@ export default function ScheduleScreen() {
         {histOpen && (
           <>
             {histLoading && history.length === 0 && (
-              <ActivityIndicator style={{ marginTop: 14 }} color={c.primary} />
+              <ActivityIndicator style={{ marginTop: 14 }} color={c.accent} />
             )}
             {history.length === 0 && !histLoading && (
               <Text style={[styles.empty, { color: c.inkSoft }]}>Chưa có lịch sử.</Text>
@@ -270,7 +283,7 @@ export default function ScheduleScreen() {
                     style={{
                       fontSize: 11,
                       fontWeight: "700",
-                      color: c.primary,
+                      color: c.accent,
                     }}
                   >
                     {STATUS_LABEL[h.status] || h.status}
@@ -278,7 +291,7 @@ export default function ScheduleScreen() {
                 }
               />
             ))}
-            {loadingMore && <ActivityIndicator style={{ marginTop: 16 }} color={c.primary} />}
+            {loadingMore && <ActivityIndicator style={{ marginTop: 16 }} color={c.accent} />}
           </>
         )}
       </View>

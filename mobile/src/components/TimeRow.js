@@ -9,7 +9,7 @@ export default function TimeRow({ time, sub, title, meta, right, children, last 
     <View style={[styles.wrap, !last && { borderBottomWidth: 1, borderBottomColor: c.hairline }]}>
       <View style={styles.row}>
         <View style={styles.timeCol}>
-          <Text style={[styles.time, { color: c.primary }]}>{time}</Text>
+          <Text style={[styles.time, { color: c.accent }]}>{time}</Text>
           {!!sub && <Text numberOfLines={1} style={[styles.sub, { color: c.inkSoft }]}>{sub}</Text>}
         </View>
         <View style={{ flex: 1 }}>

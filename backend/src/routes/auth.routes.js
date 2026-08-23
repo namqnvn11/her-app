@@ -1,7 +1,7 @@
 const express = require("express");
 const bcrypt = require("bcryptjs");
 const User = require("../models/User");
-const { MIN_CANCEL_HOURS } = require("../utils/cancelRule");
+const { getMinCancelHours } = require("../utils/cancelRule");
 const { ATTENDANCE_OPEN_BEFORE_MINUTES } = require("../utils/attendanceRule");
 const { isValidPhone, isValidPassword, MIN_PASSWORD_LENGTH } = require("../utils/validators");
 const { blockedMinutes, recordFailure, resetAttempts } = require("../utils/loginRateLimit");
@@ -11,9 +11,9 @@ const { signToken } = require("../utils/token");
 const router = express.Router();
 
 // Cấu hình app cần biết (vd số giờ tối thiểu để tự hủy lịch) — gửi kèm khi login và /me
-// để mobile không phải ghi cứng con số nào.
-function publicConfig() {
-  return { minCancelHours: MIN_CANCEL_HOURS, attendanceOpenBeforeMinutes: ATTENDANCE_OPEN_BEFORE_MINUTES, minPasswordLength: MIN_PASSWORD_LENGTH };
+// để mobile không phải ghi cứng con số nào. her-47: số giờ hủy do admin cài trong app (DB).
+async function publicConfig() {
+  return { minCancelHours: await getMinCancelHours(), attendanceOpenBeforeMinutes: ATTENDANCE_OPEN_BEFORE_MINUTES, minPasswordLength: MIN_PASSWORD_LENGTH };
 }
 
 // POST /api/auth/login  { phone, password }
@@ -59,7 +59,7 @@ router.post("/login", wrap(async (req, res) => {
 
   resetAttempts(phoneKey);
   const token = signToken(user);
-  res.json({ token, user: user.toPublicJSON(), config: publicConfig() });
+  res.json({ token, user: user.toPublicJSON(), config: await publicConfig() });
 }));
 
 // POST /api/auth/register  { name, phone, password }
@@ -89,7 +89,7 @@ router.post("/register", wrap(async (req, res) => {
   const user = await User.create({ name, phone: phone.trim(), email, passwordHash, role: "customer" });
 
   const token = signToken(user);
-  res.status(201).json({ token, user: user.toPublicJSON(), config: publicConfig() });
+  res.status(201).json({ token, user: user.toPublicJSON(), config: await publicConfig() });
 }));
 
 module.exports = router;

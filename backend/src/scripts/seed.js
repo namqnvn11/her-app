@@ -46,11 +46,13 @@ async function run() {
     Discipline.deleteMany({}),
     require("../models/AutoScheduleRule").deleteMany({}),
     require("../models/AutoScheduleLog").deleteMany({}),
+    require("../models/Setting").deleteMany({}), // her-47: cài đặt admin về mặc định env
   ]);
   // Đảm bảo unique index chống đặt trùng tồn tại trong DB trước khi server nhận request.
   // syncIndexes cũng DROP 2 unique index cũ thời còn PT slot (userId+classId bản type:"group",
   // userId+slotId) — DB cũ nâng cấp lên her-35 phải chạy seed hoặc drop tay 2 index đó.
   await Booking.syncIndexes();
+  await require("../models/Setting").syncIndexes(); // her-47: unique key -> 2 PATCH song song lần đầu vẫn 1 document
 
   console.log("Tạo HLV...");
   // Danh mục bộ môn (her-19, her-35: 5 môn) — thêm môn mới chỉ cần thêm document ở đây/DB

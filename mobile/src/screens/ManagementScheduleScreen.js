@@ -458,13 +458,13 @@ export default function ManagementScheduleScreen() {
             <TouchableOpacity
               key={key}
               onPress={() => changeTab(key)}
-              style={[styles.tabBtn, tab === key && { borderBottomWidth: 2.5, borderBottomColor: c.primary }]}
+              style={[styles.tabBtn, tab === key && { borderBottomWidth: 2.5, borderBottomColor: c.accent }]}
             >
               <View style={{ flexDirection: "row", alignItems: "center", gap: 5 }}>
                 {key === "past" && (
-                  <Feather name="clock" size={12} color={tab === key ? c.primary : c.inkSoft} />
+                  <Feather name="clock" size={12} color={tab === key ? c.accent : c.inkSoft} />
                 )}
-                <Text style={[styles.tabLabel, { color: tab === key ? c.primary : c.inkSoft }]}>{label}</Text>
+                <Text style={[styles.tabLabel, { color: tab === key ? c.accent : c.inkSoft }]}>{label}</Text>
               </View>
             </TouchableOpacity>
           ))}
@@ -476,7 +476,7 @@ export default function ManagementScheduleScreen() {
       <ScrollView
         ref={scrollRef}
         contentContainerStyle={{ paddingHorizontal: 22, paddingBottom: 100 }}
-        refreshControl={<RefreshControl refreshing={loading} onRefresh={() => load(tab)} tintColor={c.primary} />}
+        refreshControl={<RefreshControl refreshing={loading} onRefresh={() => load(tab)} tintColor={c.accent} />}
         // her-26: lướt xuống cuối là tự tải trang lịch sử kế tiếp — không bắt bấm nút
         scrollEventThrottle={100}
         onScroll={({ nativeEvent: { layoutMeasurement, contentOffset, contentSize } }) => {
@@ -514,7 +514,7 @@ export default function ManagementScheduleScreen() {
                 {canManage(r) ? (
                   <View style={{ flexDirection: "row", gap: 16 }}>
                     <TouchableOpacity disabled={saving} hitSlop={8} onPress={() => openClassSheet({ mode: "edit", cls: r.cls })}>
-                      <Text style={[styles.rosterLink, { color: c.primary }]}>Sửa</Text>
+                      <Text style={[styles.rosterLink, { color: c.accent }]}>Sửa</Text>
                     </TouchableOpacity>
                     <TouchableOpacity disabled={saving} hitSlop={8} onPress={() => { closeAllSheets(); setConfirmDelete(r.cls); }}>
                       <Text style={[styles.rosterLink, { color: c.inkSoft }]}>Xoá buổi</Text>
@@ -526,12 +526,12 @@ export default function ManagementScheduleScreen() {
                     <View style={styles.chipWrap}>
                       {r.customers.slice(0, 2).map((n, j) => (
                         <View key={j} style={[styles.chip, { backgroundColor: c.primaryTint }]}>
-                          <Text style={[styles.chipText, { color: c.primary }]}>{n}</Text>
+                          <Text style={[styles.chipText, { color: c.accent }]}>{n}</Text>
                         </View>
                       ))}
                       {r.customers.length > 2 && (
                         <View style={[styles.chip, { backgroundColor: c.primaryTint }]}>
-                          <Text style={[styles.chipText, { color: c.primary }]}>+{r.customers.length - 2}</Text>
+                          <Text style={[styles.chipText, { color: c.accent }]}>+{r.customers.length - 2}</Text>
                         </View>
                       )}
                     </View>
@@ -549,7 +549,7 @@ export default function ManagementScheduleScreen() {
         ))}
 
         {/* her-26: không còn nút Tải thêm — cuộn là tự tải, chỉ hiện vòng xoay khi đang tải */}
-        {loadingMore && <ActivityIndicator style={{ marginTop: 16 }} color={c.primary} />}
+        {loadingMore && <ActivityIndicator style={{ marginTop: 16 }} color={c.accent} />}
       </ScrollView>
 
       {/* Mục 6: HLV tự mở buổi 1:1/1:2 của mình — nút nổi như màn Lịch tập */}
@@ -559,7 +559,7 @@ export default function ManagementScheduleScreen() {
           style={[styles.fab, { backgroundColor: c.card }]}
           onPress={() => openClassSheet({ mode: "create" })}
         >
-          <Feather name="plus" size={24} color={c.primary} />
+          <Feather name="plus" size={24} color={c.accent} />
         </TouchableOpacity>
       )}
 
@@ -581,7 +581,7 @@ export default function ManagementScheduleScreen() {
                 classForm.format === key && { backgroundColor: c.primaryTint, borderColor: c.primaryTint },
               ]}
             >
-              <Text style={[styles.formChipText, { color: classForm.format === key ? c.primary : c.ink }]}>{key}</Text>
+              <Text style={[styles.formChipText, { color: classForm.format === key ? c.accent : c.ink }]}>{key}</Text>
             </TouchableOpacity>
           ))}
         </View>
@@ -601,7 +601,7 @@ export default function ManagementScheduleScreen() {
                     classForm.discipline === key && { backgroundColor: c.primaryTint, borderColor: c.primaryTint },
                   ]}
                 >
-                  <Text style={[styles.formChipText, { color: classForm.discipline === key ? c.primary : c.ink }]}>
+                  <Text style={[styles.formChipText, { color: classForm.discipline === key ? c.accent : c.ink }]}>
                     {label}
                   </Text>
                 </TouchableOpacity>
@@ -664,7 +664,7 @@ export default function ManagementScheduleScreen() {
       />
 
       {!!toast && (
-        <View style={[styles.toast, { backgroundColor: c.primary }]}>
+        <View style={[styles.toast, { backgroundColor: c.accent }]}>
           <Feather name="info" size={14} color="#fff" />
           <Text style={styles.toastText}>{toast}</Text>
         </View>

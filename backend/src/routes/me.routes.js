@@ -6,7 +6,7 @@ const Package = require("../models/Package");
 const Booking = require("../models/Booking");
 const AutoScheduleRule = require("../models/AutoScheduleRule");
 const { requireAuth } = require("../middleware/auth");
-const { MIN_CANCEL_HOURS } = require("../utils/cancelRule");
+const { getMinCancelHours } = require("../utils/cancelRule");
 const { ATTENDANCE_OPEN_BEFORE_MINUTES } = require("../utils/attendanceRule");
 const wrap = require("../utils/asyncHandler");
 const { serializePackage } = require("../utils/packages");
@@ -21,14 +21,14 @@ router.use(requireAuth);
 // GET /api/me — kèm config để app đồng bộ quy tắc với server (vd số giờ tự hủy).
 // her-45: đây cũng là chỗ GIA HẠN TRƯỢT — app gọi /me mỗi lần mở, token đã cũ thì trả về
 // `token` mới để app lưu đè. Chưa tới lúc gia hạn thì KHÔNG có field `token` (app giữ nguyên).
-router.get("/", (req, res) => {
+router.get("/", wrap(async (req, res) => {
   const token = renewedToken(req.user, req.tokenPayload);
   res.json({
     user: req.user.toPublicJSON(),
-    config: { minCancelHours: MIN_CANCEL_HOURS, attendanceOpenBeforeMinutes: ATTENDANCE_OPEN_BEFORE_MINUTES, minPasswordLength: MIN_PASSWORD_LENGTH },
+    config: { minCancelHours: await getMinCancelHours(), attendanceOpenBeforeMinutes: ATTENDANCE_OPEN_BEFORE_MINUTES, minPasswordLength: MIN_PASSWORD_LENGTH },
     ...(token ? { token } : {}),
   });
-});
+}));
 
 // PATCH /api/me  { name?, avatarUrl? }  -- đổi số điện thoại nên xử lý riêng vì cần unique-check
 router.patch("/", wrap(async (req, res) => {

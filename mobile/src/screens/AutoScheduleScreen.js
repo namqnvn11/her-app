@@ -154,7 +154,7 @@ export default function AutoScheduleScreen({ onBack }) {
     <View style={{ flex: 1, backgroundColor: c.bg }}>
       <ScrollView
         contentContainerStyle={{ paddingBottom: 110 }}
-        refreshControl={<RefreshControl refreshing={loading} onRefresh={load} tintColor={c.primary} />}
+        refreshControl={<RefreshControl refreshing={loading} onRefresh={load} tintColor={c.accent} />}
       >
         <TopBar title="Lịch tự động" sub="Lớp được tự tạo sẵn cho 7 ngày tới để học viên đăng ký" onBack={onBack} />
 
@@ -178,7 +178,7 @@ export default function AutoScheduleScreen({ onBack }) {
                 </Text>
                 <View style={{ flexDirection: "row", gap: 16, marginTop: 6 }}>
                   <TouchableOpacity disabled={busy} hitSlop={8} onPress={() => toggle(r)}>
-                    <Text style={[styles.link, { color: c.primary }]}>{r.active ? "Tắt" : "Bật"}</Text>
+                    <Text style={[styles.link, { color: c.accent }]}>{r.active ? "Tắt" : "Bật"}</Text>
                   </TouchableOpacity>
                   <TouchableOpacity disabled={busy} hitSlop={8} onPress={() => setConfirmDelete(r)}>
                     <Text style={[styles.link, { color: c.inkSoft }]}>Xoá</Text>
@@ -199,7 +199,7 @@ export default function AutoScheduleScreen({ onBack }) {
           setSheetOpen(true);
         }}
       >
-        <Feather name="plus" size={24} color={c.primary} />
+        <Feather name="plus" size={24} color={c.accent} />
       </TouchableOpacity>
 
       <FormSheet visible={sheetOpen} title="Lịch tự động mới" onClose={() => { if (!busy) setSheetOpen(false); }}>
@@ -216,7 +216,7 @@ export default function AutoScheduleScreen({ onBack }) {
               })}
               style={[styles.chip, { borderColor: c.line }, form.format === key && { backgroundColor: c.primaryTint, borderColor: c.primaryTint }]}
             >
-              <Text style={[styles.chipText, { color: form.format === key ? c.primary : c.ink }]}>{key}</Text>
+              <Text style={[styles.chipText, { color: form.format === key ? c.accent : c.ink }]}>{key}</Text>
             </TouchableOpacity>
           ))}
         </View>
@@ -233,7 +233,7 @@ export default function AutoScheduleScreen({ onBack }) {
               }))}
               style={[styles.chip, { borderColor: c.line }, form.discipline === key && { backgroundColor: c.primaryTint, borderColor: c.primaryTint }]}
             >
-              <Text style={[styles.chipText, { color: form.discipline === key ? c.primary : c.ink }]}>{label}</Text>
+              <Text style={[styles.chipText, { color: form.discipline === key ? c.accent : c.ink }]}>{label}</Text>
             </TouchableOpacity>
           ))}
           {disciplineChips(form.format).length === 0 && (
@@ -281,7 +281,7 @@ export default function AutoScheduleScreen({ onBack }) {
                 }))}
                 style={[styles.chip, { borderColor: c.line }, on && { backgroundColor: c.primaryTint, borderColor: c.primaryTint }]}
               >
-                <Text style={[styles.chipText, { color: on ? c.primary : c.ink }]}>{label}</Text>
+                <Text style={[styles.chipText, { color: on ? c.accent : c.ink }]}>{label}</Text>
               </TouchableOpacity>
             );
           })}

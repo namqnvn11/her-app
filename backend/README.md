@@ -78,7 +78,14 @@ Mọi route (trừ `/auth/*` và `/health`) cần header:
 Authorization: Bearer <token nhận được lúc login>
 ```
 
-## 5. Deploy free để app thật (không phải localhost) gọi được
+## 5. Deploy
+
+**Máy chủ thật (AWS Lightsail, từ 23/08/2026):** bộ script trong `deploy/` ở gốc repo —
+`setup-server.sh` (cài máy 1 lần), `deploy.sh` (cập nhật bản mới), `backup-mongo.sh` (sao lưu đêm),
+`nginx-her.conf`, `ecosystem.config.js` (pm2). Hướng dẫn từng bước: `docs-her/huong-dan-deploy-aws.md`.
+Máy chủ phục vụ API cho app; web xem tạm vẫn ở Vercel (đặt `EXPO_PUBLIC_API_URL` trỏ API HTTPS — xem `mobile/src/config.js`).
+
+### 5b. (Cũ) Deploy free Render + Atlas
 
 Chạy local thì app di động chạy trên **điện thoại thật** sẽ không gọi được `localhost` của máy tính —
 cần 1 trong 2 cách:

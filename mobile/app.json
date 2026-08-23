@@ -10,13 +10,13 @@
     "splash": {
       "image": "./assets/splash.png",
       "resizeMode": "contain",
-      "backgroundColor": "#F3EEE3"
+      "backgroundColor": "#FAF7F1"
     },
     "assetBundlePatterns": ["**/*"],
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#F3EEE3"
+        "backgroundColor": "#FAF7F1"
       },
       "edgeToEdgeEnabled": true,
       "package": "com.her.gymapp"

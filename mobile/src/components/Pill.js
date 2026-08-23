@@ -9,16 +9,16 @@ export default function Pill({ children, tone = "tint" }) {
   const { c } = useTheme();
   const resolved = LEGACY_TONES[tone] || tone;
   let bg = c.primaryTint;
-  let fg = c.primary;
+  let fg = c.accent;
   let borderColor = "transparent";
 
   if (resolved === "solid") {
-    bg = c.primary;
+    bg = c.accent;
     fg = c.primaryOn;
   } else if (resolved === "outline") {
     bg = "transparent";
-    fg = c.primary;
-    borderColor = c.primary;
+    fg = c.accent;
+    borderColor = c.accent;
   }
 
   return (

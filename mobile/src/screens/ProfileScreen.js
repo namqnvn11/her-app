@@ -139,7 +139,7 @@ export default function ProfileScreen() {
       <View style={{ paddingHorizontal: 22 }}>
         <View style={[styles.head, { borderBottomColor: c.line }]}>
           <View style={[styles.avatar, { backgroundColor: c.primaryTint }]}>
-            <Text style={[styles.avatarText, { color: c.primary }]}>{initials}</Text>
+            <Text style={[styles.avatarText, { color: c.accent }]}>{initials}</Text>
           </View>
           <View>
             <Text style={[styles.name, { color: c.ink }]}>{user?.name}</Text>
@@ -171,7 +171,7 @@ export default function ProfileScreen() {
                       {p.expiresAt ? `hết hạn ${fmtShortDate(p.expiresAt)}` : "không thời hạn"}
                     </Text>
                   </View>
-                  <Text style={[styles.pkgStatus, { color: p.status === "active" ? c.primary : c.inkSoft }]}>
+                  <Text style={[styles.pkgStatus, { color: p.status === "active" ? c.accent : c.inkSoft }]}>
                     {PKG_STATUS[p.status] || p.status}
                   </Text>
                 </View>
@@ -262,7 +262,7 @@ export default function ProfileScreen() {
         <AppButton
           style={{ marginTop: 22 }}
           onPress={logout}
-          icon={<Feather name="log-out" size={14} color="#fff" style={{ marginRight: 2 }} />}
+          icon={<Feather name="log-out" size={14} color={c.primaryOn} style={{ marginRight: 2 }} />}
         >
           Đăng xuất
         </AppButton>
@@ -305,7 +305,7 @@ export default function ProfileScreen() {
                   backgroundColor: on ? c.primaryTint : "transparent",
                 }}
               >
-                <Text style={{ fontSize: 12.5, fontWeight: "700", color: on ? c.primary : c.ink }}>{label}</Text>
+                <Text style={{ fontSize: 12.5, fontWeight: "700", color: on ? c.accent : c.ink }}>{label}</Text>
               </TouchableOpacity>
             );
           })}

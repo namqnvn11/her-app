@@ -342,9 +342,9 @@ export default function AccountsScreen() {
             <TouchableOpacity
               key={o.key}
               onPress={() => changeRole(o.key)}
-              style={[styles.tabBtn, role === o.key && { borderBottomWidth: 2.5, borderBottomColor: c.primary }]}
+              style={[styles.tabBtn, role === o.key && { borderBottomWidth: 2.5, borderBottomColor: c.accent }]}
             >
-              <Text style={[styles.tabLabel, { color: role === o.key ? c.primary : c.inkSoft }]}>{o.label}</Text>
+              <Text style={[styles.tabLabel, { color: role === o.key ? c.accent : c.inkSoft }]}>{o.label}</Text>
             </TouchableOpacity>
           ))}
         </View>
@@ -355,8 +355,8 @@ export default function AccountsScreen() {
             onPress={() => setFlag(null)}
             style={[styles.filterChip, { backgroundColor: c.primaryTint }]}
           >
-            <Text style={[styles.filterChipText, { color: c.primary }]}>{`Đang lọc: ${FLAG_LABEL[flag]}`}</Text>
-            <Feather name="x" size={13} color={c.primary} />
+            <Text style={[styles.filterChipText, { color: c.accent }]}>{`Đang lọc: ${FLAG_LABEL[flag]}`}</Text>
+            <Feather name="x" size={13} color={c.accent} />
           </TouchableOpacity>
         )}
       </View>
@@ -365,7 +365,7 @@ export default function AccountsScreen() {
 
       <ScrollView
         contentContainerStyle={{ paddingHorizontal: 22, paddingBottom: 110 }}
-        refreshControl={<RefreshControl refreshing={loading} onRefresh={() => load(role, flag)} tintColor={c.primary} />}
+        refreshControl={<RefreshControl refreshing={loading} onRefresh={() => load(role, flag)} tintColor={c.accent} />}
       >
         {visible.length === 0 && !loading && (
           <Text style={[styles.empty, { color: c.inkSoft }]}>
@@ -391,7 +391,7 @@ export default function AccountsScreen() {
               ]}
             >
               <View style={[styles.avatar, { backgroundColor: c.primaryTint }]}>
-                <Text style={[styles.avatarText, { color: c.primary }]}>
+                <Text style={[styles.avatarText, { color: c.accent }]}>
                   {(a.name || "?").slice(0, 1).toUpperCase()}
                 </Text>
               </View>
@@ -407,7 +407,7 @@ export default function AccountsScreen() {
                     .join(" · ")}
                 </Text>
               </View>
-              <Text style={[styles.status, { color: a.isActive ? c.inkSoft : c.primary }]}>
+              <Text style={[styles.status, { color: a.isActive ? c.inkSoft : c.accent }]}>
                 {a.isActive ? "Hoạt động" : "Đã khoá"}
               </Text>
             </TouchableOpacity>
@@ -432,7 +432,7 @@ export default function AccountsScreen() {
                     variant="outline"
                     style={{ marginTop: 8 }}
                     onPress={() => { closeAllSheets(); setPkgCustomer(a); }}
-                    icon={<Feather name="credit-card" size={13} color={c.primary} style={{ marginRight: 2 }} />}
+                    icon={<Feather name="credit-card" size={13} color={c.accent} style={{ marginRight: 2 }} />}
                   >
                     Gói tập &amp; thanh toán
                   </AppButton>
@@ -445,7 +445,7 @@ export default function AccountsScreen() {
                 )}
                 {resetInfo?.id === a.id && (
                   <TouchableOpacity onPress={() => copyPassword(resetInfo.password)} hitSlop={6}>
-                    <Text selectable style={[styles.resetText, { color: c.primary }]}>
+                    <Text selectable style={[styles.resetText, { color: c.accent }]}>
                       Mật khẩu mới: <Text style={styles.resetPw}>{resetInfo.password}</Text>
                       {"  "}
                       <Text style={{ color: copied ? c.success : c.inkSoft, fontWeight: "700" }}>
@@ -470,7 +470,7 @@ export default function AccountsScreen() {
           setSheetOpen(true);
         }}
       >
-        <Feather name="plus" size={24} color={c.primary} />
+        <Feather name="plus" size={24} color={c.accent} />
       </TouchableOpacity>
 
       <FormSheet visible={sheetOpen} title={`Tài khoản ${ROLE_LABEL[role]} mới`} onClose={() => setSheetOpen(false)}>
@@ -499,7 +499,7 @@ export default function AccountsScreen() {
                     }))}
                     style={[styles.chip, { borderColor: c.line }, on && { backgroundColor: c.primaryTint, borderColor: c.primaryTint }]}
                   >
-                    <Text style={[styles.chipText, { color: on ? c.primary : c.ink }]}>{label}</Text>
+                    <Text style={[styles.chipText, { color: on ? c.accent : c.ink }]}>{label}</Text>
                   </TouchableOpacity>
                 );
               })}
@@ -584,7 +584,7 @@ export default function AccountsScreen() {
                       onPress={() => setPayForm((s) => ({ ...s, [perKey]: k }))}
                       style={[styles.perChip, { borderColor: c.line }, payForm[perKey] === k && { backgroundColor: c.primaryTint, borderColor: c.primaryTint }]}
                     >
-                      <Text style={[styles.perChipText, { color: payForm[perKey] === k ? c.primary : c.ink }]}>{l}</Text>
+                      <Text style={[styles.perChipText, { color: payForm[perKey] === k ? c.accent : c.ink }]}>{l}</Text>
                     </TouchableOpacity>
                   ))}
                 </View>
@@ -599,7 +599,7 @@ export default function AccountsScreen() {
       </FormSheet>
 
       {!!toast && (
-        <View style={[styles.toast, { backgroundColor: toast.isError ? c.danger : c.primary }]}>
+        <View style={[styles.toast, { backgroundColor: toast.isError ? c.danger : c.accent }]}>
           <Feather name={toast.isError ? "alert-circle" : "check"} size={14} color="#fff" />
           <Text style={styles.toastText}>{toast.msg}</Text>
         </View>

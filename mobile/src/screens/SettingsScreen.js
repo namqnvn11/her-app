@@ -14,7 +14,7 @@ import { useTheme } from "../theme";
 // Không có mục "Chế độ tối" — quyết định 16/08/2026: app chỉ dùng giao diện sáng.
 export default function SettingsScreen({ onBack }) {
   const { c } = useTheme();
-  const { user, config, login } = useAuth();
+  const { user, config, login, updateConfig } = useAuth();
   const minPw = config?.minPasswordLength ?? 6; // 1 nguồn từ server (C5)
   // Mục 9: công tắc nhắc-1-tiếng nối thật với bộ đặt thông báo trên máy.
   // Tắt = huỷ ngay mọi nhắc đã đặt; bật lại thì lần tải lịch kế tiếp sẽ tự đặt lại.
@@ -50,6 +50,39 @@ export default function SettingsScreen({ onBack }) {
   };
   // Nhắc gói sắp hết hạn: server-push, làm ở bước deploy — công tắc giữ chỗ
   const [remindPackage, setRemindPackage] = useState(true);
+
+  // her-47: admin tự chỉnh số giờ tối thiểu để khách tự hủy — 1 nguồn ở server (C5), app chỉ hiện.
+  // Giá trị hiện hành lấy từ config (login//me); lưu xong cập nhật config để tab Lịch dùng số mới ngay.
+  const isAdmin = user?.role === "admin";
+  const [cancelHours, setCancelHours] = useState(config?.minCancelHours != null ? String(config.minCancelHours) : "");
+  const [cancelError, setCancelError] = useState("");
+  const [cancelDone, setCancelDone] = useState(false);
+  const [cancelBusy, setCancelBusy] = useState(false);
+  useEffect(() => {
+    if (config?.minCancelHours != null) setCancelHours(String(config.minCancelHours));
+  }, [config?.minCancelHours]);
+  const cancelDirty = isAdmin && cancelHours !== "" && Number(cancelHours) !== config?.minCancelHours;
+
+  const saveCancelHours = async () => {
+    if (cancelBusy) return;
+    setCancelError("");
+    setCancelDone(false);
+    setCancelBusy(true);
+    try {
+      // Gửi số (server kiểm tra nguyên 0..72 và trả lý do nếu sai — hiện nguyên câu đó, L8)
+      const res = await api.patch("/settings", { minCancelHours: Number(cancelHours) });
+      updateConfig({ minCancelHours: res.minCancelHours });
+      setCancelDone(true);
+      clearTimeout(cancelTimer.current);
+      cancelTimer.current = setTimeout(() => setCancelDone(false), 3000);
+    } catch (err) {
+      setCancelError(err.message);
+    } finally {
+      setCancelBusy(false);
+    }
+  };
+  const cancelTimer = useRef(null);
+  useEffect(() => () => clearTimeout(cancelTimer.current), []);
 
   // Mục 10 (her-14): tự đổi mật khẩu — sheet 3 ô, lỗi hiện TRONG sheet (L8)
   const [pwOpen, setPwOpen] = useState(false);
@@ -110,6 +143,33 @@ export default function SettingsScreen({ onBack }) {
         <Row c={c} title="Nhắc gói sắp hết hạn">
           <Toggle value={remindPackage} onChange={setRemindPackage} />
         </Row>
+
+        {isAdmin && (
+          <>
+            <SectionLabel>Hủy lịch</SectionLabel>
+            <View style={[styles.row, { borderBottomColor: c.hairline }]}>
+              <Text style={[styles.rowTitle, { color: c.ink, flex: 1, paddingRight: 12 }]}>
+                Khách tự hủy trước giờ tập tối thiểu
+              </Text>
+              <TextInput
+                value={cancelHours}
+                onChangeText={(v) => { setCancelHours(v.replace(/[^0-9]/g, "")); setCancelError(""); }}
+                keyboardType="number-pad"
+                maxLength={2}
+                onBlur={() => { if (cancelHours === "" && config?.minCancelHours != null) setCancelHours(String(config.minCancelHours)); }}
+                style={[styles.hoursInput, { borderColor: c.line, color: c.ink }]}
+              />
+              <Text style={[styles.rowTitle, { color: c.ink, marginLeft: 6 }]}>tiếng</Text>
+            </View>
+            {!!cancelError && <Text style={{ fontSize: 12, fontWeight: "700", marginTop: 8, color: c.danger }}>{cancelError}</Text>}
+            {cancelDone && <Text style={{ fontSize: 12, marginTop: 8, color: c.success }}>Đã lưu</Text>}
+            {cancelDirty && (
+              <AppButton style={{ marginTop: 12 }} disabled={cancelBusy} onPress={saveCancelHours}>
+                {cancelBusy ? "Đang lưu..." : "Lưu"}
+              </AppButton>
+            )}
+          </>
+        )}
 
         <SectionLabel>Bảo mật</SectionLabel>
         <TouchableOpacity onPress={openPw} style={[styles.row, { borderBottomColor: c.hairline }]}>
@@ -176,4 +236,5 @@ const styles = StyleSheet.create({
   rowTitle: { fontSize: 13.5, fontWeight: "700" },
   rowSub: { fontSize: 11.5, marginTop: 2 },
   input: { borderBottomWidth: 1.5, paddingVertical: 8, fontSize: 15, marginTop: 2 },
+  hoursInput: { borderWidth: 1, borderRadius: 8, width: 52, paddingVertical: 6, fontSize: 15, fontWeight: "700", textAlign: "center" },
 });

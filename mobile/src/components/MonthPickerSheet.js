@@ -43,7 +43,7 @@ export default function MonthPickerSheet({ visible, year, month, minMonth, onPic
       <View style={styles.yearRow}>
         {canPrevYear ? (
           <TouchableOpacity onPress={() => setViewYear(viewYear - 1)} hitSlop={12} style={styles.yearArrow}>
-            <Feather name="chevron-left" size={19} color={c.primary} />
+            <Feather name="chevron-left" size={19} color={c.accent} />
           </TouchableOpacity>
         ) : (
           <View style={styles.yearArrow} />
@@ -51,7 +51,7 @@ export default function MonthPickerSheet({ visible, year, month, minMonth, onPic
         <Text style={[styles.yearText, { color: c.ink }]}>{viewYear}</Text>
         {canNextYear ? (
           <TouchableOpacity onPress={() => setViewYear(viewYear + 1)} hitSlop={12} style={styles.yearArrow}>
-            <Feather name="chevron-right" size={19} color={c.primary} />
+            <Feather name="chevron-right" size={19} color={c.accent} />
           </TouchableOpacity>
         ) : (
           <View style={styles.yearArrow} />
@@ -79,7 +79,7 @@ export default function MonthPickerSheet({ visible, year, month, minMonth, onPic
       </View>
 
       <TouchableOpacity onPress={() => onPick(nowY, nowM)} style={[styles.todayBtn, { borderTopColor: c.hairline }]}>
-        <Text style={[styles.todayText, { color: c.primary }]}>Về tháng này</Text>
+        <Text style={[styles.todayText, { color: c.accent }]}>Về tháng này</Text>
       </TouchableOpacity>
     </FormSheet>
   );

@@ -94,6 +94,9 @@ export function AuthProvider({ children }) {
     return user;
   }, []);
 
+  // her-47: admin lưu cài đặt (số giờ hủy) xong -> cập nhật config trong app ngay, không chờ /me
+  const updateConfig = useCallback((patch) => setConfig((prev) => ({ ...(prev || {}), ...patch })), []);
+
   // Phiên chết giữa chừng (token hết hạn / tài khoản bị khoá) -> tự đăng xuất về màn login
   useEffect(() => {
     setSessionInvalidHandler(() => logout());
@@ -101,7 +104,7 @@ export function AuthProvider({ children }) {
   }, [logout]);
 
   return (
-    <AuthContext.Provider value={{ token, user, config, loading, login, logout, refreshMe }}>
+    <AuthContext.Provider value={{ token, user, config, loading, login, logout, refreshMe, updateConfig }}>
       {children}
     </AuthContext.Provider>
   );

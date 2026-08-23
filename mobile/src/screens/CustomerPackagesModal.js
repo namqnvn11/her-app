@@ -222,7 +222,7 @@ export default function CustomerPackagesModal({ customer, onClose }) {
             >
               <View style={{ flexDirection: "row", alignItems: "center" }}>
                 <Text style={[styles.rowTitle, { color: c.ink, flex: 1 }]}>{p.name}</Text>
-                <Text style={[styles.status, { color: p.status === "active" ? c.primary : c.inkSoft }]}>
+                <Text style={[styles.status, { color: p.status === "active" ? c.accent : c.inkSoft }]}>
                   {STATUS_LABEL[p.status] || p.status}
                 </Text>
               </View>
@@ -240,13 +240,13 @@ export default function CustomerPackagesModal({ customer, onClose }) {
               <View style={{ flexDirection: "row", gap: 14, marginTop: 8 }}>
                 {p.debt > 0 && (
                   <TouchableOpacity disabled={busy} onPress={() => { setPayError(""); setPayAmount(""); setPayTarget(p); }} hitSlop={8}>
-                    <Text style={[styles.actionLink, { color: c.primary }]}>Thu tiền</Text>
+                    <Text style={[styles.actionLink, { color: c.accent }]}>Thu tiền</Text>
                   </TouchableOpacity>
                 )}
                 {/* Bảo lưu chỉ áp dụng gói CÓ thời hạn (Q11) */}
                 {p.expiresAt && (p.status === "active" || p.status === "paused") && (
                   <TouchableOpacity disabled={busy} onPress={() => pauseOrResume(p)} hitSlop={8}>
-                    <Text style={[styles.actionLink, { color: c.primary }]}>
+                    <Text style={[styles.actionLink, { color: c.accent }]}>
                       {p.status === "paused" ? "Mở bảo lưu" : "Bảo lưu"}
                     </Text>
                   </TouchableOpacity>
@@ -265,7 +265,7 @@ export default function CustomerPackagesModal({ customer, onClose }) {
             setSheetOpen(true);
           }}
         >
-          <Feather name="plus" size={24} color={c.primary} />
+          <Feather name="plus" size={24} color={c.accent} />
         </TouchableOpacity>
 
         <FormSheet visible={sheetOpen} title={`Bán gói cho ${customer.name}`} onClose={() => setSheetOpen(false)}>
@@ -290,7 +290,7 @@ export default function CustomerPackagesModal({ customer, onClose }) {
                   form.kind === key && { backgroundColor: c.primaryTint, borderColor: c.primaryTint },
                 ]}
               >
-                <Text style={[styles.chipText, { color: form.kind === key ? c.primary : c.ink }]}>{label}</Text>
+                <Text style={[styles.chipText, { color: form.kind === key ? c.accent : c.ink }]}>{label}</Text>
               </TouchableOpacity>
             ))}
           </View>
@@ -312,7 +312,7 @@ export default function CustomerPackagesModal({ customer, onClose }) {
                       form.serviceTypes.includes(key) && { backgroundColor: c.primaryTint, borderColor: c.primaryTint },
                     ]}
                   >
-                    <Text style={[styles.chipText, { color: form.serviceTypes.includes(key) ? c.primary : c.ink }]}>
+                    <Text style={[styles.chipText, { color: form.serviceTypes.includes(key) ? c.accent : c.ink }]}>
                       {label}
                     </Text>
                   </TouchableOpacity>
@@ -331,7 +331,7 @@ export default function CustomerPackagesModal({ customer, onClose }) {
                       form.format === f && { backgroundColor: c.primaryTint, borderColor: c.primaryTint },
                     ]}
                   >
-                    <Text style={[styles.chipText, { color: form.format === f ? c.primary : c.ink }]}>{f}</Text>
+                    <Text style={[styles.chipText, { color: form.format === f ? c.accent : c.ink }]}>{f}</Text>
                   </TouchableOpacity>
                 ))}
               </View>
@@ -385,7 +385,7 @@ export default function CustomerPackagesModal({ customer, onClose }) {
                   form.paymentMethod === key && { backgroundColor: c.primaryTint, borderColor: c.primaryTint },
                 ]}
               >
-                <Text style={[styles.chipText, { color: form.paymentMethod === key ? c.primary : c.ink }]}>{label}</Text>
+                <Text style={[styles.chipText, { color: form.paymentMethod === key ? c.accent : c.ink }]}>{label}</Text>
               </TouchableOpacity>
             ))}
           </View>
@@ -401,7 +401,7 @@ export default function CustomerPackagesModal({ customer, onClose }) {
                   form.payState === key && { backgroundColor: c.primaryTint, borderColor: c.primaryTint },
                 ]}
               >
-                <Text style={[styles.chipText, { color: form.payState === key ? c.primary : c.ink }]}>{label}</Text>
+                <Text style={[styles.chipText, { color: form.payState === key ? c.accent : c.ink }]}>{label}</Text>
               </TouchableOpacity>
             ))}
           </View>
@@ -447,7 +447,7 @@ export default function CustomerPackagesModal({ customer, onClose }) {
         </FormSheet>
 
         {!!toast && (
-          <View style={[styles.toast, { backgroundColor: toast.isError ? c.danger : c.primary }]}>
+          <View style={[styles.toast, { backgroundColor: toast.isError ? c.danger : c.accent }]}>
             <Feather name={toast.isError ? "alert-circle" : "check"} size={14} color="#fff" />
             <Text style={styles.toastText}>{toast.msg}</Text>
           </View>

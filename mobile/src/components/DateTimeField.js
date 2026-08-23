@@ -120,7 +120,7 @@ export default function DateTimeField({ value, onChange, mode = "datetime", plac
           </TouchableOpacity>
         )}
         <TouchableOpacity onPress={() => setOpen((o) => !o)} hitSlop={8} style={styles.fieldIcon}>
-          <Feather name={open ? "chevron-up" : mode === "time" ? "clock" : "calendar"} size={15} color={c.primary} />
+          <Feather name={open ? "chevron-up" : mode === "time" ? "clock" : "calendar"} size={15} color={c.accent} />
         </TouchableOpacity>
       </View>
 
@@ -131,13 +131,13 @@ export default function DateTimeField({ value, onChange, mode = "datetime", plac
           {/* Điều hướng tháng */}
           <View style={styles.monthNav}>
             <TouchableOpacity onPress={() => setCursor(new Date(cursor.getFullYear(), cursor.getMonth() - 1, 1))} hitSlop={10}>
-              <Feather name="chevron-left" size={17} color={c.primary} />
+              <Feather name="chevron-left" size={17} color={c.accent} />
             </TouchableOpacity>
             <Text style={[styles.monthLabel, { color: c.ink }]}>
               Tháng {cursor.getMonth() + 1}/{cursor.getFullYear()}
             </Text>
             <TouchableOpacity onPress={() => setCursor(new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1))} hitSlop={10}>
-              <Feather name="chevron-right" size={17} color={c.primary} />
+              <Feather name="chevron-right" size={17} color={c.accent} />
             </TouchableOpacity>
           </View>
 
@@ -198,7 +198,7 @@ export default function DateTimeField({ value, onChange, mode = "datetime", plac
                 onPress={() => pickMinute(m)}
                 style={[styles.chip, { borderColor: c.line }, (sel.minute ?? 0) === m && { backgroundColor: c.primaryTint, borderColor: c.primaryTint }]}
               >
-                <Text style={[styles.chipText, { color: (sel.minute ?? 0) === m ? c.primary : c.ink }]}>{pad(m)}</Text>
+                <Text style={[styles.chipText, { color: (sel.minute ?? 0) === m ? c.accent : c.ink }]}>{pad(m)}</Text>
               </TouchableOpacity>
             ))}
           </View>
@@ -218,7 +218,7 @@ export default function DateTimeField({ value, onChange, mode = "datetime", plac
             style={styles.doneBtn}
             hitSlop={8}
           >
-            <Text style={[styles.doneText, { color: c.primary }]}>Xong</Text>
+            <Text style={[styles.doneText, { color: c.accent }]}>Xong</Text>
           </TouchableOpacity>
         </View>
       )}
