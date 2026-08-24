@@ -13,6 +13,8 @@ echo "== Backend"
 cd "$APP_DIR/backend"
 [ -f .env ] || { echo "THIẾU backend/.env — xem hướng dẫn bước 4"; exit 1; }
 npm ci --omit=dev
+echo "== Migration (cập nhật DB theo code mới — mỗi file chỉ chạy 1 lần)"
+npm run migrate
 pm2 startOrRestart "$APP_DIR/deploy/ecosystem.config.js" --update-env
 pm2 save >/dev/null
 

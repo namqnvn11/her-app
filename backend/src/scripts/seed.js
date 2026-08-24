@@ -273,39 +273,49 @@ async function run() {
   if (boxingTomorrow) await bookClass(boxingTomorrow, customer2, pkgBoxing);
 
   // Buổi SÁT GIỜ của Minh Anh (L15): bắt đầu cách hiện tại NỬA số giờ tối thiểu — kịch bản
-  // "nút Hủy bị khoá" luôn đúng bất kể chạy seed vào giờ nào. Buổi Pilates 1:1 của Linh;
-  // Linh bận khung đó thì dịch dần 30 phút cho tới khi rảnh.
-  const linhBusy = (start, end) =>
-    classDocs.some((c) => c.coachId.equals(linh._id) && c.startAt < end && c.endAt > start);
-  let soonStart = new Date(Date.now() + Math.max(MIN_CANCEL_HOURS * 0.5, 0.5) * 3600 * 1000);
-  // 48 lần dịch × 30 phút = quét trọn 24 giờ. Linh mỗi ngày chỉ dạy 4 khung nên vòng lặp
-  // luôn dừng sớm; nếu (không thực tế) quét hết mà vẫn bận thì dùng luôn mốc cuối —
-  // seed vẫn chạy xong, cùng lắm 2 buổi của Linh chồng giờ trong dữ liệu demo.
-  for (let shift = 0; shift < 48; shift++) {
-    const end = new Date(soonStart.getTime() + 3600 * 1000);
-    if (!linhBusy(soonStart, end)) break;
-    soonStart = new Date(soonStart.getTime() + 30 * 60 * 1000);
+  // "nút Hủy bị khoá" phải đúng BẤT KỂ chạy seed lúc mấy giờ, múi giờ nào (CI chạy UTC — her-47).
+  // Buổi phải NẰM TRONG cửa MIN_CANCEL_HOURS nên KHÔNG được dịch giờ ra ngoài cửa; thay vào đó:
+  // thử Linh (pilates) rồi Đức (gym — vẫn trừ gói Mix), dịch 30' trong phạm vi còn < cửa;
+  // đường cùng (không thực tế) thì cứ lấy Linh ở mốc đầu — demo chấp nhận 2 buổi chồng giờ.
+  const coachBusy = (coach, start, end) =>
+    classDocs.some((c) => c.coachId.equals(coach._id) && c.startAt < end && c.endAt > start);
+  const soonCandidates = [
+    { coach: linh, serviceType: "pilates" },
+    { coach: duc, serviceType: "gym" },
+  ];
+  const windowMs = MIN_CANCEL_HOURS * 3600 * 1000;
+  const firstStart = new Date(Date.now() + Math.max(MIN_CANCEL_HOURS * 0.5, 0.5) * 3600 * 1000);
+  let soonPick = { coach: linh, serviceType: "pilates", start: firstStart }; // fallback đường cùng
+  let found = false;
+  for (let t = firstStart.getTime(); !found && t - Date.now() < windowMs * 0.9; t += 30 * 60 * 1000) {
+    for (const cand of soonCandidates) {
+      if (!coachBusy(cand.coach, new Date(t), new Date(t + 3600 * 1000))) {
+        soonPick = { ...cand, start: new Date(t) };
+        found = true;
+        break;
+      }
+    }
   }
   const soonClass = await GymClass.create({
-    name: LABELS.pilates,
-    serviceType: "pilates",
+    name: LABELS[soonPick.serviceType],
+    serviceType: soonPick.serviceType,
     format: "1:1",
-    coachId: linh._id,
-    startAt: soonStart,
-    endAt: new Date(soonStart.getTime() + 3600 * 1000),
+    coachId: soonPick.coach._id,
+    startAt: soonPick.start,
+    endAt: new Date(soonPick.start.getTime() + 3600 * 1000),
     capacity: FORMAT_CAPACITY["1:1"],
     bookedCount: 1,
   });
   await Booking.create({
     userId: customer1._id,
     classId: soonClass._id,
-    trainerId: linh._id,
+    trainerId: soonPick.coach._id,
     title: soonClass.name,
-    serviceType: "pilates",
+    serviceType: soonPick.serviceType,
     format: "1:1",
     startAt: soonClass.startAt,
     endAt: soonClass.endAt,
-    packageId: pkgMix._id,
+    packageId: pkgMix._id, // gym/pilates đều thuộc gói Mix của Minh Anh
   });
 
   // ---- Lịch sử demo (tab Lịch sử của khách): 2 buổi đã tập + 1 buổi đã hủy ----
