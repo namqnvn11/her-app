@@ -17,7 +17,7 @@ export const COLORS = {
                            // nền nút có thể nhạt mà chữ màu nâu vẫn đủ tương phản trên nền be
   primaryOn: "#2A2622",    // chữ trên nền primary — ĐEN (nền nhạt, chữ trắng không đủ tương phản)
   primaryOnSoft: "#5C4A36",// chữ phụ trên nền primary
-  primaryTint: "#F1E7D8",  // nền badge/track nhạt theo primary
+  primaryTint: "#EDDFC6",  // nền pill/chip ĐANG CHỌN, badge, track — đậm hơn nền 1 nấc để thấy rõ cái đang chọn
   primarySoft: "#FBF6EE",  // nền ghi chú nhạt
   success: "#5C7A63",      // trạng thái tốt (đã tập...)
   danger: "#8C3A3A",       // toast lỗi

@@ -45,7 +45,7 @@ function TextTabBar({ state, descriptors, navigation }) {
             <View style={[styles.tabChip, compact && { paddingHorizontal: 8 }, focused && { backgroundColor: COLORS.primaryTint }]}>
               <Text
                 numberOfLines={1}
-                style={[styles.tabLabel, compact && { fontSize: 12.5 }, { color: focused ? COLORS.primary : COLORS.tabInactive }]}
+                style={[styles.tabLabel, compact && { fontSize: 12.5 }, { color: focused ? COLORS.accent : COLORS.tabInactive }]}
               >
                 {label}
               </Text>
@@ -112,7 +112,7 @@ function Root() {
   if (loading) {
     return (
       <View style={{ flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: COLORS.bg }}>
-        <ActivityIndicator color={COLORS.primary} size="large" />
+        <ActivityIndicator color={COLORS.accent} size="large" />
       </View>
     );
   }
