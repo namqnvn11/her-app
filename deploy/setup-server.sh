@@ -42,7 +42,7 @@ cd "$APP_DIR/backend" && npm ci --omit=dev
 
 echo "== 7/8 nginx: /api -> Node (thư mục web chỉ dùng khi deploy.sh --with-web)"
 sudo mkdir -p /var/www/her && sudo chown -R "$USER":"$USER" /var/www/her
-echo "<p>HER API đang chạy. Dùng app hoặc bản web.</p>" > /var/www/her/index.html
+printf '<!doctype html><meta charset="utf-8"><p>HER API đang chạy. Dùng app hoặc bản web.</p>' > /var/www/her/index.html
 sudo cp "$APP_DIR/deploy/nginx-her.conf" /etc/nginx/sites-available/her
 sudo ln -sf /etc/nginx/sites-available/her /etc/nginx/sites-enabled/her
 sudo rm -f /etc/nginx/sites-enabled/default
