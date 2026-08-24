@@ -27,6 +27,9 @@ if [ "${1:-}" = "--with-web" ]; then
   rsync -a --delete dist/ /var/www/her/
 fi
 
+echo "== Trang chính sách quyền riêng tư (store yêu cầu)"
+cp "$APP_DIR/deploy/privacy.html" /var/www/her/privacy.html
+
 echo "== Kiểm tra"
 sleep 2
 curl -fsS http://127.0.0.1:4000/api/health && echo
