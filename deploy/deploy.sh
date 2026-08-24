@@ -35,6 +35,10 @@ main() {
   echo "== Trang chính sách quyền riêng tư (store yêu cầu)"
   cp "$APP_DIR/deploy/privacy.html" /var/www/her/privacy.html
 
+  echo "== Trang web chính (her-48) -> /var/www/web"
+  sudo mkdir -p /var/www/web && sudo chown -R "$USER":"$USER" /var/www/web
+  rsync -a --delete "$APP_DIR/web/" /var/www/web/
+
   echo "== Kiểm tra"
   sleep 2
   curl -fsS http://127.0.0.1:4000/api/health && echo

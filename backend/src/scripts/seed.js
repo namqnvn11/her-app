@@ -47,6 +47,7 @@ async function run() {
     require("../models/AutoScheduleRule").deleteMany({}),
     require("../models/AutoScheduleLog").deleteMany({}),
     require("../models/Setting").deleteMany({}), // her-47: cài đặt admin về mặc định env
+    require("../models/Lead").deleteMany({}), // her-48: khách hẹn tư vấn từ web — demo/test về trạng thái sạch
   ]);
   // Đảm bảo unique index chống đặt trùng tồn tại trong DB trước khi server nhận request.
   // syncIndexes cũng DROP 2 unique index cũ thời còn PT slot (userId+classId bản type:"group",

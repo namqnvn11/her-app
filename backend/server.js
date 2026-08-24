@@ -21,6 +21,7 @@ const dashboardRoutes = require("./src/routes/dashboard.routes");
 const disciplinesRoutes = require("./src/routes/disciplines.routes");
 const autoScheduleRoutes = require("./src/routes/autoSchedule.routes");
 const settingsRoutes = require("./src/routes/settings.routes");
+const leadsRoutes = require("./src/routes/leads.routes");
 
 const app = express();
 app.use(cors());
@@ -43,6 +44,7 @@ app.use("/api/dashboard", dashboardRoutes);
 app.use("/api/disciplines", disciplinesRoutes);
 app.use("/api/auto-schedule", autoScheduleRoutes);
 app.use("/api/settings", settingsRoutes);
+app.use("/api/leads", leadsRoutes);
 
 app.use((req, res) => res.status(404).json({ error: "Không tìm thấy đường dẫn API" }));
 

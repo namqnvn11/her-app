@@ -12,7 +12,9 @@
       "resizeMode": "contain",
       "backgroundColor": "#FAF7F1"
     },
-    "assetBundlePatterns": ["**/*"],
+    "assetBundlePatterns": [
+      "**/*"
+    ],
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
@@ -27,6 +29,15 @@
     },
     "web": {
       "favicon": "./assets/favicon.png"
-    }
+    },
+    "extra": {
+      "eas": {
+        "projectId": "4753a7e2-17f9-4aaa-b19f-5bc354a7a0d3"
+      }
+    },
+    "owner": "namqnvn11",
+    "plugins": [
+      "expo-font"
+    ]
   }
 }
