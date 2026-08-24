@@ -1,0 +1,55 @@
+# CI/CD her-app (24/08/2026): push lên main có thay đổi backend/deploy
+# -> chạy TOÀN BỘ test backend trên máy ảo GitHub (Mongo 7 service)
+# -> test pass mới SSH vào Lightsail chạy deploy.sh (test fail = KHÔNG deploy).
+# Secret cần có: DEPLOY_SSH_KEY (khoá riêng github-actions-her — xem docs-her/huong-dan-deploy-aws.md).
+name: Test & Deploy backend
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "backend/**"
+      - "deploy/**"
+      - ".github/workflows/deploy.yml"
+
+concurrency:
+  group: deploy-backend
+  cancel-in-progress: false # deploy đang chạy dở thì chờ, không chặt ngang
+
+jobs:
+  test:
+    name: Chạy test backend
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      mongo:
+        image: mongo:7
+        ports: ["27017:27017"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+        working-directory: backend
+      - run: npm test
+        working-directory: backend
+
+  deploy:
+    name: Deploy lên Lightsail
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: SSH vào server chạy deploy.sh
+        env:
+          SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H 47.129.162.37 >> ~/.ssh/known_hosts 2>/dev/null
+          ssh -i ~/.ssh/deploy_key ubuntu@47.129.162.37 "bash ~/her-app/deploy/deploy.sh"
+          curl -fsS https://her-studio.duckdns.org/api/health
