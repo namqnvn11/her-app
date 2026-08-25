@@ -38,6 +38,12 @@
     "owner": "namqnvn11",
     "plugins": [
       "expo-font"
-    ]
+    ],
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/4753a7e2-17f9-4aaa-b19f-5bc354a7a0d3"
+    }
   }
 }

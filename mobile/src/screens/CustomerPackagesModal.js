@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { Modal, View, Text, ScrollView, TextInput, TouchableOpacity, StyleSheet } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Feather } from "@expo/vector-icons";
 import TopBar from "../components/TopBar";
 import AppButton from "../components/AppButton";
@@ -41,6 +42,7 @@ const EMPTY_FORM = {
 // ghi nhận thanh toán/nợ (Q10) và bảo lưu/mở bảo lưu (Q11)
 export default function CustomerPackagesModal({ customer, onClose }) {
   const { c } = useTheme();
+  const insets = useSafeAreaInsets();
   const [packages, setPackages] = useState([]);
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState("");
@@ -205,7 +207,8 @@ export default function CustomerPackagesModal({ customer, onClose }) {
 
   return (
     <Modal visible animationType="slide" onRequestClose={onClose}>
-      <View style={{ flex: 1, backgroundColor: c.bg }}>
+      {/* Modal toàn màn nằm ngoài SafeAreaView → tự đệm đáy cho thanh điều hướng Android */}
+      <View style={{ flex: 1, backgroundColor: c.bg, paddingBottom: insets.bottom }}>
         <TopBar title={`Gói tập — ${customer.name}`} sub={customer.phone} onBack={onClose} />
 
         {!!errorMsg && <Text style={[styles.error, { color: c.danger }]}>{errorMsg}</Text>}
@@ -259,7 +262,7 @@ export default function CustomerPackagesModal({ customer, onClose }) {
         {/* Nút nổi mở form bán gói — cùng kiểu pill trắng của bản thiết kế */}
         <TouchableOpacity
           activeOpacity={0.85}
-          style={[styles.fab, { backgroundColor: c.card }]}
+          style={[styles.fab, { backgroundColor: c.card, bottom: 34 + insets.bottom }]}
           onPress={() => {
             setSheetError("");
             setSheetOpen(true);
@@ -447,7 +450,7 @@ export default function CustomerPackagesModal({ customer, onClose }) {
         </FormSheet>
 
         {!!toast && (
-          <View style={[styles.toast, { backgroundColor: toast.isError ? c.danger : c.accent }]}>
+          <View style={[styles.toast, { backgroundColor: toast.isError ? c.danger : c.accent, bottom: 80 + insets.bottom }]}>
             <Feather name={toast.isError ? "alert-circle" : "check"} size={14} color="#fff" />
             <Text style={styles.toastText}>{toast.msg}</Text>
           </View>

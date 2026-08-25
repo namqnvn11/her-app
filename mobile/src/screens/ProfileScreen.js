@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { View, Text, TextInput, TouchableOpacity, ScrollView, StyleSheet, Modal } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useFocusEffect } from "@react-navigation/native";
 import { Feather } from "@expo/vector-icons";
 import TopBar from "../components/TopBar";
@@ -24,6 +25,7 @@ function fmtShortDate(d) {
 export default function ProfileScreen() {
   const { user, logout, refreshMe } = useAuth();
   const { c } = useTheme();
+  const insets = useSafeAreaInsets();
   const [name, setName] = useState(user?.name || "");
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
@@ -316,14 +318,15 @@ export default function ProfileScreen() {
         </AppButton>
       </FormSheet>
 
+      {/* Modal toàn màn nằm ngoài SafeAreaView → tự đệm đáy cho thanh điều hướng Android */}
       <Modal visible={settingsOpen} animationType="slide" onRequestClose={() => setSettingsOpen(false)}>
-        <View style={{ flex: 1, backgroundColor: c.bg }}>
+        <View style={{ flex: 1, backgroundColor: c.bg, paddingBottom: insets.bottom }}>
           <SettingsScreen onBack={() => setSettingsOpen(false)} />
         </View>
       </Modal>
 
       <Modal visible={autoOpen} animationType="slide" onRequestClose={() => setAutoOpen(false)}>
-        <View style={{ flex: 1, backgroundColor: c.bg }}>
+        <View style={{ flex: 1, backgroundColor: c.bg, paddingBottom: insets.bottom }}>
           <AutoScheduleScreen onBack={() => setAutoOpen(false)} />
         </View>
       </Modal>

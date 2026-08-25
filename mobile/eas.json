@@ -8,14 +8,16 @@
       "autoIncrement": true,
       "env": {
         "EXPO_PUBLIC_API_URL": "https://api.her-pilates.com/api"
-      }
+      },
+      "channel": "production"
     },
     "preview": {
       "distribution": "internal",
       "autoIncrement": true,
       "env": {
         "EXPO_PUBLIC_API_URL": "https://api.her-pilates.com/api"
-      }
+      },
+      "channel": "preview"
     }
   },
   "submit": {

@@ -2,15 +2,19 @@
 // (DateTimeField khởi tạo state từ value lúc mount). Nếu đổi FormSheet sang View/Animated
 // không unmount, phải thêm key cho children để state không dính giữa 2 lần mở.
 import { Modal, View, Text, Pressable, ScrollView, StyleSheet } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTheme } from "../theme";
 
 // Bottom sheet chứa form tạo mới — thay cho form nằm đè trên danh sách.
 export default function FormSheet({ visible, title, onClose, children }) {
   const { c } = useTheme();
+  // Android edge-to-edge: sheet nằm sát đáy nên phải đệm thêm chiều cao thanh điều hướng 3 nút,
+  // không thì nút cuối sheet bị thanh này che (phát hiện khi test bản Play 25/08)
+  const insets = useSafeAreaInsets();
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
       <Pressable style={[styles.backdrop, { backgroundColor: c.overlay }]} onPress={onClose} />
-      <View style={[styles.sheet, { backgroundColor: c.card }]}>
+      <View style={[styles.sheet, { backgroundColor: c.card, paddingBottom: 26 + insets.bottom }]}>
         <View style={[styles.grabber, { backgroundColor: c.line }]} />
         {!!title && <Text style={[styles.title, { color: c.ink }]}>{title}</Text>}
         <ScrollView keyboardShouldPersistTaps="handled">{children}</ScrollView>
