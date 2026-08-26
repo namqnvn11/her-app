@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { View, Text, TextInput, StyleSheet, KeyboardAvoidingView, Platform } from "react-native";
+import { View, Text, TextInput, StyleSheet, KeyboardAvoidingView, ScrollView } from "react-native";
 import Svg, { Circle, Text as SvgText } from "react-native-svg";
 import AppButton from "../components/AppButton";
 import { useAuth } from "../context/AuthContext";
@@ -26,10 +26,14 @@ export default function LoginScreen() {
   };
 
   return (
-    <KeyboardAvoidingView
-      style={styles.wrap}
-      behavior={Platform.OS === "ios" ? "padding" : undefined}
-    >
+    // KAV "padding" đẩy form lên trên CẢ 2 hệ (Android tràn viền KHÔNG tự thu cửa sổ — test Samsung
+    // 26/08), ScrollView để cuộn tới ô đang gõ trên máy nhỏ
+    <KeyboardAvoidingView style={styles.wrap} behavior="padding">
+      <ScrollView
+        contentContainerStyle={styles.content}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+      >
       <View style={{ alignItems: "center", marginBottom: 38 }}>
         <Svg width={92} height={92} viewBox="0 0 1000 1000">
           <Circle cx="500" cy="500" r="430" fill="none" stroke={COLORS.accent} strokeWidth="55" />
@@ -68,12 +72,14 @@ export default function LoginScreen() {
       </AppButton>
 
       <Text style={styles.forgot}>Quên mật khẩu? Liên hệ quầy lễ tân</Text>
+      </ScrollView>
     </KeyboardAvoidingView>
   );
 }
 
 const styles = StyleSheet.create({
-  wrap: { flex: 1, backgroundColor: COLORS.bg, justifyContent: "center", paddingHorizontal: 32 },
+  wrap: { flex: 1, backgroundColor: COLORS.bg },
+  content: { flexGrow: 1, justifyContent: "center", paddingHorizontal: 32, paddingVertical: 24 },
   tagline: { marginTop: 12, fontSize: 12, letterSpacing: 3, color: COLORS.accent, fontWeight: "700" },
   label: { fontSize: 10.5, color: COLORS.inkSoft, fontWeight: "700", letterSpacing: 1.4, marginTop: 18 },
   // Ô nhập kiểu gạch chân theo bản thiết kế — không đóng khung

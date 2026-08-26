@@ -210,7 +210,7 @@ export default function RosterSheet({ classId, onClose, canClear = false, canCan
               <TextInput
                 value={query}
                 onChangeText={setQuery}
-                placeholder="Tìm theo tên hoặc số điện thoại"
+                placeholder="Tìm tên hoặc số điện thoại"
                 placeholderTextColor={c.inkSoft}
                 autoFocus
                 style={[styles.addInput, { borderBottomColor: c.line, color: c.ink }]}

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { View, Text, ScrollView, TextInput, TouchableOpacity, StyleSheet } from "react-native";
+import { View, Text, ScrollView, TextInput, TouchableOpacity, StyleSheet, KeyboardAvoidingView } from "react-native";
 import { Feather } from "@expo/vector-icons";
 import TopBar from "../components/TopBar";
 import SectionLabel from "../components/SectionLabel";
@@ -127,7 +127,9 @@ export default function SettingsScreen({ onBack }) {
   const pwInput = [styles.input, { borderBottomColor: c.line, color: c.ink }];
 
   return (
-    <ScrollView style={{ flex: 1, backgroundColor: c.bg }} contentContainerStyle={{ paddingBottom: 40 }}>
+    // Ô nhập nằm giữa trang → KAV đẩy nội dung lên khi bàn phím bật, cả 2 hệ (26/08)
+    <KeyboardAvoidingView style={{ flex: 1, backgroundColor: c.bg }} behavior="padding">
+    <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: 40 }} keyboardShouldPersistTaps="handled">
       <TopBar title="Cài đặt" onBack={onBack} />
 
       <View style={{ paddingHorizontal: 22 }}>
@@ -210,6 +212,7 @@ export default function SettingsScreen({ onBack }) {
         </AppButton>
       </FormSheet>
     </ScrollView>
+    </KeyboardAvoidingView>
   );
 }
 

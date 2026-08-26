@@ -276,7 +276,7 @@ export default function CustomerPackagesModal({ customer, onClose }) {
           <TextInput
             value={form.name}
             onChangeText={(v) => setForm((f) => ({ ...f, name: v }))}
-            placeholder="VD: Pilates 24 buổi — 3 tháng"
+            placeholder="VD: Pilates 24 buổi"
             placeholderTextColor={c.tabInactive}
             style={inputStyle}
           />
@@ -414,7 +414,7 @@ export default function CustomerPackagesModal({ customer, onClose }) {
               <MoneyInput
                 value={form.owe}
                 onChangeValue={(v) => setForm((f) => ({ ...f, owe: v }))}
-                placeholder="Khách vẫn tập bình thường, quầy nhắc thu sau"
+                placeholder="Quầy nhắc thu sau"
                 placeholderTextColor={c.tabInactive}
                 style={inputStyle}
               />

@@ -446,7 +446,7 @@ export default function ManagementScheduleScreen() {
           <TextInput
             value={search}
             onChangeText={setSearch}
-            placeholder="Tìm theo bộ môn, lớp hoặc tên khách"
+            placeholder="Tìm bộ môn, lớp, tên khách"
             placeholderTextColor={c.inkSoft}
             style={[styles.searchInput, { color: c.ink }]}
             returnKeyType="search"

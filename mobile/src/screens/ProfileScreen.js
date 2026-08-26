@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { View, Text, TextInput, TouchableOpacity, ScrollView, StyleSheet, Modal } from "react-native";
+import { View, Text, TextInput, TouchableOpacity, ScrollView, StyleSheet, KeyboardAvoidingView, Modal } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useFocusEffect } from "@react-navigation/native";
 import { Feather } from "@expo/vector-icons";
@@ -135,7 +135,9 @@ export default function ProfileScreen() {
   };
 
   return (
-    <ScrollView style={{ flex: 1, backgroundColor: c.bg }} contentContainerStyle={{ paddingBottom: 40 }}>
+    // Ô nhập nằm giữa trang → KAV đẩy nội dung lên khi bàn phím bật, cả 2 hệ (26/08)
+    <KeyboardAvoidingView style={{ flex: 1, backgroundColor: c.bg }} behavior="padding">
+    <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: 40 }} keyboardShouldPersistTaps="handled">
       <TopBar title="Cá nhân" />
 
       <View style={{ paddingHorizontal: 22 }}>
@@ -331,6 +333,7 @@ export default function ProfileScreen() {
         </View>
       </Modal>
     </ScrollView>
+    </KeyboardAvoidingView>
   );
 }
 

@@ -611,7 +611,7 @@ export default function ScheduleBuilderScreen() {
           <TextInput
             value={search}
             onChangeText={setSearch}
-            placeholder="Tìm theo bộ môn hoặc tên HLV"
+            placeholder="Tìm bộ môn hoặc tên HLV"
             placeholderTextColor={c.inkSoft}
             style={[styles.searchInput, { color: c.ink }]}
             returnKeyType="search"

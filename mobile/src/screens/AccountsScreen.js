@@ -331,7 +331,7 @@ export default function AccountsScreen() {
           <TextInput
             value={search}
             onChangeText={setSearch}
-            placeholder="Tìm theo tên hoặc số điện thoại"
+            placeholder="Tìm tên hoặc số điện thoại"
             placeholderTextColor={c.inkSoft}
             style={[styles.searchInput, { color: c.ink }]}
             returnKeyType="search"
@@ -510,7 +510,7 @@ export default function AccountsScreen() {
         <TextInput
           value={form.password}
           onChangeText={(v) => setForm((f) => ({ ...f, password: v }))}
-          placeholder="Người dùng nên đổi sau lần đăng nhập đầu"
+          placeholder="Nên đổi sau khi đăng nhập"
           placeholderTextColor={c.tabInactive}
           autoCapitalize="none"
           autoCorrect={false}
