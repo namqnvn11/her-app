@@ -24,8 +24,11 @@
       "package": "com.her.gymapp"
     },
     "ios": {
-      "supportsTablet": true,
-      "bundleIdentifier": "com.her.gymapp"
+      "supportsTablet": false,
+      "bundleIdentifier": "com.her.gymapp",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "web": {
       "favicon": "./assets/favicon.png"

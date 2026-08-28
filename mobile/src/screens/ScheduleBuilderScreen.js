@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from "react";
-import { View, Text, ScrollView, TextInput, TouchableOpacity, StyleSheet, RefreshControl, ActivityIndicator } from "react-native";
+import { View, Text, ScrollView, TextInput, TouchableOpacity, StyleSheet, ActivityIndicator } from "react-native";
+import PullRefresh from "../components/PullRefresh";
 import { useFocusEffect } from "@react-navigation/native";
 import { Feather } from "@expo/vector-icons";
 import TopBar from "../components/TopBar";
@@ -640,7 +641,7 @@ export default function ScheduleBuilderScreen() {
       <ScrollView
         ref={scrollRef}
         contentContainerStyle={{ paddingHorizontal: 22, paddingBottom: 110 }}
-        refreshControl={<RefreshControl refreshing={loading} onRefresh={() => load(tab)} tintColor={c.accent} />}
+        refreshControl={<PullRefresh onRefresh={() => load(tab)} />}
         // her-26: lướt xuống cuối là tự tải trang lịch sử kế tiếp — không bắt bấm nút
         scrollEventThrottle={100}
         onScroll={({ nativeEvent: { layoutMeasurement, contentOffset, contentSize } }) => {
@@ -656,6 +657,7 @@ export default function ScheduleBuilderScreen() {
         onLayout={(e) => { viewH.current = e.nativeEvent.layout.height; }}
         onContentSizeChange={(w, h) => { contentH.current = h; }}
       >
+        {sections.length === 0 && loading && <ActivityIndicator color={c.accent} style={{ marginTop: 24 }} />}
         {sections.length === 0 && !loading && (
           <Text style={[styles.empty, { color: c.inkSoft }]}>
             {/* Đang lọc + lịch sử còn trang chưa tải → hệ thống đang tự tải tiếp (review her-22 #1) */}

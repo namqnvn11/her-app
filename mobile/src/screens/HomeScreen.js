@@ -1,5 +1,6 @@
 import { useState, useCallback } from "react";
-import { View, Text, ScrollView, TouchableOpacity, StyleSheet, RefreshControl } from "react-native";
+import { View, Text, ScrollView, TouchableOpacity, StyleSheet, ActivityIndicator } from "react-native";
+import PullRefresh from "../components/PullRefresh";
 import { useFocusEffect, useNavigation } from "@react-navigation/native";
 import HeaderBlock from "../components/HeaderBlock";
 import SectionLabel from "../components/SectionLabel";
@@ -98,7 +99,7 @@ export default function HomeScreen() {
     <ScrollView
       style={{ flex: 1, backgroundColor: c.bg }}
       contentContainerStyle={{ paddingBottom: 40 }}
-      refreshControl={<RefreshControl refreshing={loading} onRefresh={load} tintColor={c.accent} />}
+      refreshControl={<PullRefresh onRefresh={load} />}
     >
       <HeaderBlock
         eyebrow={new Date().toLocaleDateString("vi-VN", { weekday: "long", day: "2-digit", month: "2-digit" })}
@@ -128,6 +129,7 @@ export default function HomeScreen() {
         {!!errorMsg && <Text style={[styles.error, { color: c.danger }]}>{errorMsg}</Text>}
 
         <SectionLabel>Sắp tới</SectionLabel>
+        {bookings.length === 0 && loading && <ActivityIndicator color={c.accent} style={{ marginTop: 24 }} />}
         {bookings.length === 0 && !loading && (
           <Text style={[styles.empty, { color: c.inkSoft }]}>Chưa có lịch nào sắp tới.</Text>
         )}

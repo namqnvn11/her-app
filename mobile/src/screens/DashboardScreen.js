@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef } from "react";
-import { View, Text, ScrollView, TouchableOpacity, StyleSheet, RefreshControl } from "react-native";
+import { View, Text, ScrollView, TouchableOpacity, StyleSheet, ActivityIndicator } from "react-native";
+import PullRefresh from "../components/PullRefresh";
 import { useFocusEffect, useNavigation } from "@react-navigation/native";
 import { Feather } from "@expo/vector-icons";
 import TopBar from "../components/TopBar";
@@ -110,7 +111,7 @@ export default function DashboardScreen() {
     <ScrollView
       style={{ flex: 1, backgroundColor: c.bg }}
       contentContainerStyle={{ paddingBottom: 40 }}
-      refreshControl={<RefreshControl refreshing={loading} onRefresh={() => { load(); loadPayroll(); }} tintColor={c.accent} />}
+      refreshControl={<PullRefresh onRefresh={() => { load(); loadPayroll(); }} />}
     >
       {/* Mẫu 11: dashboard Admin KHÔNG có header màu — tiêu đề thường */}
       {isAdmin && (
@@ -159,6 +160,7 @@ export default function DashboardScreen() {
 
       <View style={{ paddingHorizontal: 22 }}>
         {!!errorMsg && <Text style={[styles.error, { color: c.danger }]}>{errorMsg}</Text>}
+        {!data && loading && <ActivityIndicator color={c.accent} style={{ marginTop: 24 }} />}
         {!data && !loading && !errorMsg && (
           <Text style={[styles.empty, { color: c.inkSoft }]}>
             Chưa có số liệu tổng quan — phần này sẽ có dữ liệu khi làm xong điểm danh &amp; báo cáo.

@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect } from "react";
-import { View, Text, ScrollView, TextInput, TouchableOpacity, StyleSheet, RefreshControl } from "react-native";
+import { View, Text, ScrollView, TextInput, TouchableOpacity, StyleSheet, ActivityIndicator } from "react-native";
+import PullRefresh from "../components/PullRefresh";
 import { Feather } from "@expo/vector-icons";
 import TopBar from "../components/TopBar";
 import AppButton from "../components/AppButton";
@@ -154,12 +155,14 @@ export default function AutoScheduleScreen({ onBack }) {
     <View style={{ flex: 1, backgroundColor: c.bg }}>
       <ScrollView
         contentContainerStyle={{ paddingBottom: 110 }}
-        refreshControl={<RefreshControl refreshing={loading} onRefresh={load} tintColor={c.accent} />}
+        refreshControl={<PullRefresh onRefresh={load} />}
       >
         <TopBar title="Lịch tự động" sub="Lớp được tự tạo sẵn cho 7 ngày tới để học viên đăng ký" onBack={onBack} />
 
         <View style={{ paddingHorizontal: 22 }}>
           {!!errorMsg && <Text style={[styles.error, { color: c.danger }]}>{errorMsg}</Text>}
+
+          {rules.length === 0 && loading && <ActivityIndicator color={c.accent} style={{ marginTop: 24 }} />}
 
           {rules.length === 0 && !loading && (
             <Text style={[styles.empty, { color: c.inkSoft }]}>Chưa có lịch tự động nào.</Text>

@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from "react";
-import { View, Text, ScrollView, TouchableOpacity, StyleSheet, RefreshControl } from "react-native";
+import { View, Text, ScrollView, TouchableOpacity, StyleSheet, ActivityIndicator } from "react-native";
+import PullRefresh from "../components/PullRefresh";
 import { useFocusEffect } from "@react-navigation/native";
 import { Feather } from "@expo/vector-icons";
 import TopBar from "../components/TopBar";
@@ -221,7 +222,7 @@ export default function BookingScreen() {
       {noPackage ? (
         <ScrollView
           contentContainerStyle={{ paddingHorizontal: 22, paddingTop: 8 }}
-          refreshControl={<RefreshControl refreshing={loading} onRefresh={load} tintColor={c.accent} />}
+          refreshControl={<PullRefresh onRefresh={load} />}
         >
           <View style={[styles.noPkg, { backgroundColor: c.primarySoft }]}>
             <Feather name="info" size={18} color={c.accent} />
@@ -293,10 +294,11 @@ export default function BookingScreen() {
 
           <ScrollView
             contentContainerStyle={{ paddingHorizontal: 22, paddingBottom: 100 }}
-            refreshControl={<RefreshControl refreshing={loading} onRefresh={load} tintColor={c.accent} />}
+            refreshControl={<PullRefresh onRefresh={load} />}
           >
             {/* Chỉ khẳng định "ngày trống" khi ĐÃ tải được dữ liệu — lỗi mạng lần đầu thì
                 errorMsg ở trên nói lý do, không hiện empty-state sai sự thật (review N1) */}
+            {visible.length === 0 && loading && <ActivityIndicator color={c.accent} style={{ marginTop: 24 }} />}
             {visible.length === 0 && !loading && myPackages !== null && !errorMsg && (
               <Text style={[styles.empty, { color: c.inkSoft }]}>
                 {dayMatched.length > 0 ? "Không có buổi nào khớp bộ lọc." : "Ngày này chưa có buổi nào."}

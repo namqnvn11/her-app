@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from "react";
-import { View, Text, ScrollView, TouchableOpacity, StyleSheet, RefreshControl, ActivityIndicator } from "react-native";
+import { View, Text, ScrollView, TouchableOpacity, StyleSheet, ActivityIndicator } from "react-native";
+import PullRefresh from "../components/PullRefresh";
 import { useFocusEffect } from "@react-navigation/native";
 import { Feather } from "@expo/vector-icons";
 import TopBar from "../components/TopBar";
@@ -188,7 +189,7 @@ export default function ScheduleScreen() {
       ref={scrollRef}
       style={{ flex: 1, backgroundColor: c.bg }}
       contentContainerStyle={{ paddingBottom: 40 }}
-      refreshControl={<RefreshControl refreshing={loading} onRefresh={load} tintColor={c.accent} />}
+      refreshControl={<PullRefresh onRefresh={load} />}
       scrollEventThrottle={100}
       onScroll={({ nativeEvent: { layoutMeasurement, contentOffset, contentSize } }) => {
         if (!histOpen) return; // đóng thì không tự nạp thêm lịch sử
@@ -208,6 +209,7 @@ export default function ScheduleScreen() {
         {!!errorMsg && <Text style={[styles.error, { color: c.danger }]}>{errorMsg}</Text>}
 
         <SectionLabel>{`Sắp tới · ${bookings.length}`}</SectionLabel>
+        {bookings.length === 0 && loading && <ActivityIndicator color={c.accent} style={{ marginTop: 24 }} />}
         {bookings.length === 0 && !loading && (
           <Text style={[styles.empty, { color: c.inkSoft }]}>Chưa có lịch tập nào.</Text>
         )}

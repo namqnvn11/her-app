@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { View, Text, ScrollView, TextInput, TouchableOpacity, StyleSheet, RefreshControl } from "react-native";
+import { View, Text, ScrollView, TextInput, TouchableOpacity, StyleSheet, ActivityIndicator } from "react-native";
+import PullRefresh from "../components/PullRefresh";
 import { useFocusEffect, useNavigation, useRoute } from "@react-navigation/native";
 import { Feather } from "@expo/vector-icons";
 import TopBar from "../components/TopBar";
@@ -101,7 +102,7 @@ export default function AccountsScreen() {
 
   // Có bộ lọc thì luôn hỏi server theo học viên + flag (server là nơi quyết định ai vào danh sách)
   const load = useCallback(async (r, f) => {
-    setLoading(true); // để RefreshControl hiện spinner đúng lúc kéo làm mới
+    setLoading(true); // ẩn empty-state + hiện vòng xoay lúc tải lần đầu (kéo-làm-mới do PullRefresh tự lo)
     try {
       setErrorMsg("");
       const res = await api.get("/accounts", f ? { role: "customer", flag: f } : { role: r });
@@ -365,8 +366,9 @@ export default function AccountsScreen() {
 
       <ScrollView
         contentContainerStyle={{ paddingHorizontal: 22, paddingBottom: 110 }}
-        refreshControl={<RefreshControl refreshing={loading} onRefresh={() => load(role, flag)} tintColor={c.accent} />}
+        refreshControl={<PullRefresh onRefresh={() => load(role, flag)} />}
       >
+        {visible.length === 0 && loading && <ActivityIndicator color={c.accent} style={{ marginTop: 24 }} />}
         {visible.length === 0 && !loading && (
           <Text style={[styles.empty, { color: c.inkSoft }]}>
             {q
