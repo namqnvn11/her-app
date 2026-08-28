@@ -14,6 +14,11 @@ import { Platform } from "react-native";
 
 const ENV_URL = process.env.EXPO_PUBLIC_API_URL; // Expo inline biến EXPO_PUBLIC_* lúc build
 const LAN_DEV_URL = "http://192.168.100.82:4000/api"; // IP LAN máy dev — đổi theo Wi-Fi
+// Máy chủ thật — dùng cho bản cài từ store/TestFlight khi thiếu biến EXPO_PUBLIC_API_URL.
+// her-52 (28/08/2026): 4 lần `eas update` quên kèm biến → bundle OTA nhúng IP LAN, điện thoại
+// khách không gọi được API (Tổng quan/Lịch tập/Tài khoản trắng). Bản production KHÔNG bao giờ
+// được rơi về IP LAN nữa.
+const PROD_URL = "https://api.her-pilates.com/api";
 
 function pickUrl() {
   if (ENV_URL) return ENV_URL;
@@ -21,7 +26,7 @@ function pickUrl() {
     if (__DEV__) return "http://localhost:4000/api";
     return `${window.location.origin}/api`;
   }
-  return LAN_DEV_URL;
+  return __DEV__ ? LAN_DEV_URL : PROD_URL;
 }
 
 export const API_BASE_URL = pickUrl();

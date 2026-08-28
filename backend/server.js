@@ -24,6 +24,11 @@ const settingsRoutes = require("./src/routes/settings.routes");
 const leadsRoutes = require("./src/routes/leads.routes");
 
 const app = express();
+// her-52 (28/08/2026): API toàn dữ liệu động → KHÔNG phát ETag và cấm cache. Trước đây Express tự
+// phát ETag, Android (okhttp) gửi lại If-None-Match → server trả 304 thân rỗng → app trắng
+// (Tổng quan/Lịch tập/Tài khoản); iOS tự lấy cache nên không lộ. Xem test/no-cache.test.js.
+app.set("etag", false);
+app.use((req, res, next) => { res.set("Cache-Control", "no-store"); next(); });
 app.use(cors());
 app.use(express.json());
 app.use(morgan("dev"));

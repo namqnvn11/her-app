@@ -87,8 +87,12 @@ export default function FormSheet({ visible, title, onClose, children }) {
           style={[
             styles.sheet,
             { backgroundColor: c.card, paddingBottom: sheetPadBottom, transform: [{ translateY: dragY }] },
+            // her-52: cỡ thường cũng không được cao hơn phần màn còn lại trên bàn phím (82% + bàn phím > 100%)
+            kb > 0 ? { maxHeight: winH - insets.top - 8 - kb } : null,
             // Mở rộng: chiếm cả màn trừ tai thỏ; cỡ thường: theo nội dung, tối đa 82%
-            expanded ? { height: winH - insets.top - 8, maxHeight: undefined } : null,
+            // her-52: trừ cả chiều cao bàn phím (đang đệm ở khung ngoài) — không thì sheet mở rộng
+            // lúc bàn phím đang bật bị đẩy vọt lên khỏi mép trên màn hình, che mất phần đầu (Android 28/08)
+            expanded ? { height: winH - insets.top - 8 - kb, maxHeight: undefined } : null,
           ]}
         >
           {/* Đuôi cùng màu nối dài dưới sheet: lúc kéo lên (cản) sheet nhích lên không bị hở đáy */}
