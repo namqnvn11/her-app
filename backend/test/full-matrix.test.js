@@ -135,7 +135,11 @@ const MATRIX = [
   { m: "POST", p: "/accounts", body: { name: "x", phone: "abc", password: "matkhau6", role: "customer" }, exp: { admin: 400, reception: 400, trainer: 403, customer: 403, anon: 401 } },
   { m: "POST", p: "/accounts", body: { name: "x", phone: "0977777777", password: "matkhau6", role: "admin" }, exp: { admin: 403, reception: 403, trainer: 403, customer: 403, anon: 401 } },
   { m: "PATCH", p: "/accounts/khong-id", body: { name: "x" }, exp: { admin: 400, reception: 400, trainer: 403, customer: 403, anon: 401 } },
-  { m: "DELETE", p: "/accounts/khong-id", exp: { admin: 410, reception: 410, trainer: 403, customer: 403, anon: 401 } },
+  // her-53: DELETE = xoá MỀM (id rác -> 400); her-56: CHỈ admin (lễ tân 403)
+  { m: "DELETE", p: "/accounts/khong-id", exp: { admin: 400, reception: 403, trainer: 403, customer: 403, anon: 401 } },
+  // her-53/55/56: sửa & xoá gói — chỉ admin
+  { m: "PATCH", p: "/packages/khong-id", body: { name: "x" }, exp: { admin: 400, reception: 403, trainer: 403, customer: 403, anon: 401 } },
+  { m: "DELETE", p: "/packages/khong-id", exp: { admin: 400, reception: 403, trainer: 403, customer: 403, anon: 401 } },
 ];
 
 test("A: ma trận phân quyền toàn bộ endpoint × 5 danh tính", async () => {

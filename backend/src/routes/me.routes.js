@@ -9,11 +9,12 @@ const { requireAuth } = require("../middleware/auth");
 const { getMinCancelHours } = require("../utils/cancelRule");
 const { ATTENDANCE_OPEN_BEFORE_MINUTES } = require("../utils/attendanceRule");
 const wrap = require("../utils/asyncHandler");
-const { serializePackage } = require("../utils/packages");
+const { serializePackage, byRemainingThenActivation } = require("../utils/packages");
 const { isValidPassword, MIN_PASSWORD_LENGTH } = require("../utils/validators");
 const { isValidClassType, labelOf } = require("../utils/disciplines");
 const { blockedMinutes, recordFailure, resetAttempts } = require("../utils/loginRateLimit");
 const { renewedToken } = require("../utils/token");
+const { isExpoPushToken } = require("../utils/notify");
 
 const router = express.Router();
 router.use(requireAuth);
@@ -44,6 +45,42 @@ router.patch("/", wrap(async (req, res) => {
   }
 
   res.json({ user: req.user.toPublicJSON() });
+}));
+
+// POST /api/me/push-token { token, platform? } — her-57: đăng ký máy nhận push. Cùng 1 token chỉ thuộc
+// 1 tài khoản (đổi tài khoản trên cùng máy thì người trước không nhận thông báo của người sau nữa).
+// Giữ tối đa 10 máy/tài khoản (máy cũ nhất bị đẩy ra).
+router.post("/push-token", wrap(async (req, res) => {
+  const { token, platform } = req.body;
+  if (!isExpoPushToken(token)) {
+    return res.status(400).json({ error: "Token thông báo không hợp lệ (cần dạng ExponentPushToken[...])" });
+  }
+  const plat = typeof platform === "string" ? platform.slice(0, 20) : "";
+  const now = new Date();
+  await User.updateMany({ _id: { $ne: req.user._id }, "pushTokens.token": token }, { $pull: { pushTokens: { token } } });
+  // Đã có token này -> chỉ cập nhật; chưa có -> thêm. Mỗi lệnh có điều kiện nên 2 request song song
+  // cùng token không tạo được 2 phần tử (review #5)
+  const touched = await User.updateOne(
+    { _id: req.user._id, "pushTokens.token": token },
+    { $set: { "pushTokens.$.updatedAt": now, "pushTokens.$.platform": plat } }
+  );
+  if (touched.matchedCount === 0) {
+    await User.updateOne(
+      { _id: req.user._id, "pushTokens.token": { $ne: token } },
+      { $push: { pushTokens: { $each: [{ token, platform: plat, updatedAt: now }], $slice: -10 } } }
+    );
+  }
+  res.json({ ok: true });
+}));
+
+// DELETE /api/me/push-token { token } — đăng xuất: máy này không nhận thông báo của tài khoản nữa
+router.delete("/push-token", wrap(async (req, res) => {
+  const { token } = req.body || {};
+  if (!isExpoPushToken(token)) {
+    return res.status(400).json({ error: "Token thông báo không hợp lệ" });
+  }
+  await User.updateOne({ _id: req.user._id }, { $pull: { pushTokens: { token } } });
+  res.json({ ok: true });
 }));
 
 // POST /api/me/change-password { currentPassword, newPassword } — mục 10 (her-14):
@@ -193,11 +230,13 @@ router.patch("/trainer-profile", wrap(async (req, res) => {
 }));
 
 // So sánh tất định cho danh sách gói: hạn gần trước (không hạn cuối), hạn bằng nhau thì
-// gói kích hoạt trước đứng trước, cuối cùng theo id — không phụ thuộc thứ tự Mongo trả về
+// gói kích hoạt trước đứng trước, cuối cùng theo id — không phụ thuộc thứ tự Mongo trả về.
+// her-54: nhóm KHÔNG thời hạn xếp theo ít buổi còn lại trước — khớp thứ tự chargeSession trừ.
 function byExpiryThenActivation(a, b) {
   const ax = a.expiresAt ? new Date(a.expiresAt).getTime() : Infinity;
   const bx = b.expiresAt ? new Date(b.expiresAt).getTime() : Infinity;
   if (ax !== bx) return ax - bx;
+  if (ax === Infinity) return byRemainingThenActivation(a, b);
   const aa = new Date(a.activatedAt).getTime();
   const ba = new Date(b.activatedAt).getTime();
   if (aa !== ba) return aa - ba;
@@ -207,7 +246,7 @@ function byExpiryThenActivation(a, b) {
 // GET /api/me/package -- gói "nổi bật" cho card trang chủ (giữ tương thích app cũ):
 // gói đang active có hạn gần nhất; không có gói có hạn thì lấy gói không thời hạn
 router.get("/package", wrap(async (req, res) => {
-  const all = await Package.find({ userId: req.user._id });
+  const all = await Package.find({ userId: req.user._id, deletedAt: null }); // her-55: bỏ gói đã xoá
   const active = all.map(serializePackage).filter((p) => p.status === "active");
   active.sort(byExpiryThenActivation);
   if (active[0]) return res.json({ package: active[0] });
@@ -221,7 +260,7 @@ router.get("/package", wrap(async (req, res) => {
 // GET /api/me/packages -- toàn bộ gói của tôi: đang dùng trước (hạn gần lên đầu, không hạn
 // cuối nhóm), gói bảo lưu/hết buổi/hết hạn xếp sau — học viên tự tra cứu (quyết định 12/08/2026)
 router.get("/packages", wrap(async (req, res) => {
-  const all = await Package.find({ userId: req.user._id });
+  const all = await Package.find({ userId: req.user._id, deletedAt: null }); // her-55
   const items = all.map(serializePackage);
   const order = { active: 0, paused: 1, used_up: 2, expired: 3 };
   items.sort((a, b) => {

@@ -264,6 +264,7 @@ router.get("/classes/:id/eligible-customers", wrap(async (req, res) => {
   if (!gymClass.serviceType || !gymClass.format) return res.json({ customers: [] });
 
   const userIds = await Package.distinct("userId", {
+    deletedAt: null, // her-55
     serviceTypes: gymClass.serviceType,
     format: gymClass.format,
     pausedAt: null,

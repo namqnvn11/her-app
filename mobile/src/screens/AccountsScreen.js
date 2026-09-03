@@ -252,8 +252,8 @@ export default function AccountsScreen() {
     }
   };
 
-  // Không còn chức năng xoá tài khoản (quyết định 07/08/2026, L5) — chỉ khoá/mở khoá,
-  // dữ liệu lịch sử giữ nguyên. Khoá tài khoản HLV sẽ ẩn HLV đó khỏi danh sách đặt lịch.
+  // Khoá/mở khoá = tạm ngưng, dữ liệu lịch sử giữ nguyên. Khoá tài khoản HLV sẽ ẩn HLV đó
+  // khỏi danh sách đặt lịch.
   const toggleActive = async (acc) => {
     if (busy) return;
     setBusy(true);
@@ -284,10 +284,30 @@ export default function AccountsScreen() {
     }
   };
 
+  // her-53 (03/09/2026): XOÁ MỀM tài khoản tạo nhầm — server chỉ đánh dấu đã xoá (lịch sử/gói
+  // giữ nguyên), tài khoản biến mất khỏi danh sách và không đăng nhập được. Còn lịch sắp tới thì
+  // server từ chối và nói rõ — hiện nguyên câu đó (C6).
+  const deleteAccount = async (acc) => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await api.delete(`/accounts/${acc.id}`);
+      setSelectedId(null);
+      setResetInfo(null);
+      flash("Đã xoá tài khoản");
+      load(role, flag);
+    } catch (err) {
+      flash(err.message, true);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const runConfirmed = async () => {
     if (!confirmAction) return;
     const { kind, acc } = confirmAction;
     if (kind === "reset") await resetPassword(acc);
+    else if (kind === "delete") await deleteAccount(acc);
     else await toggleActive(acc);
     setConfirmAction(null);
   };
@@ -456,6 +476,19 @@ export default function AccountsScreen() {
                     </Text>
                   </TouchableOpacity>
                 )}
+                {/* her-53: xoá mềm tài khoản tạo nhầm — nút viền đỏ, luôn qua hộp xác nhận. her-56: CHỈ admin (server cũng chặn — H5) */}
+                {user?.role === "admin" && (
+                <AppButton
+                  variant="outline"
+                  danger
+                  style={{ marginTop: 8 }}
+                  disabled={busy}
+                  onPress={() => { closeAllSheets(); setConfirmAction({ kind: "delete", acc: a }); }}
+                  icon={<Feather name="trash-2" size={13} color={c.danger} style={{ marginRight: 2 }} />}
+                >
+                  Xoá tài khoản
+                </AppButton>
+                )}
               </View>
             )}
           </View>
@@ -530,18 +563,27 @@ export default function AccountsScreen() {
         title={
           confirmAction?.kind === "reset"
             ? "Cấp lại mật khẩu?"
-            : confirmAction?.acc?.isActive
-              ? "Khoá tài khoản?"
-              : "Mở khoá tài khoản?"
+            : confirmAction?.kind === "delete"
+              ? "Xoá tài khoản?"
+              : confirmAction?.acc?.isActive
+                ? "Khoá tài khoản?"
+                : "Mở khoá tài khoản?"
         }
         message={
           confirmAction?.kind === "reset"
             ? `Cấp mật khẩu mới cho "${confirmAction?.acc?.name}"? Mật khẩu cũ sẽ hết hiệu lực.`
-            : confirmAction?.acc?.isActive
-              ? `Bạn chắc chắn muốn khoá tài khoản "${confirmAction?.acc?.name}"?`
-              : `Mở khoá tài khoản "${confirmAction?.acc?.name}"?`
+            : confirmAction?.kind === "delete"
+              ? `Xoá "${confirmAction?.acc?.name}"? Tài khoản sẽ bị ẩn và không đăng nhập được nữa. Lịch sử tập, gói và thu tiền vẫn được giữ. Chỉ tạm ngưng thì dùng Khoá.`
+              : confirmAction?.acc?.isActive
+                ? `Bạn chắc chắn muốn khoá tài khoản "${confirmAction?.acc?.name}"?`
+                : `Mở khoá tài khoản "${confirmAction?.acc?.name}"?`
         }
-        confirmLabel={confirmAction?.kind === "reset" ? "Cấp mật khẩu mới" : confirmAction?.acc?.isActive ? "Khoá" : "Mở khoá"}
+        confirmLabel={
+          confirmAction?.kind === "reset" ? "Cấp mật khẩu mới"
+            : confirmAction?.kind === "delete" ? "Xoá"
+              : confirmAction?.acc?.isActive ? "Khoá" : "Mở khoá"
+        }
+        danger={confirmAction?.kind === "delete"}
         onConfirm={runConfirmed}
         onClose={() => setConfirmAction(null)}
       />

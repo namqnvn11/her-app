@@ -13,7 +13,7 @@
 import { Platform } from "react-native";
 
 const ENV_URL = process.env.EXPO_PUBLIC_API_URL; // Expo inline biến EXPO_PUBLIC_* lúc build
-const LAN_DEV_URL = "http://192.168.100.82:4000/api"; // IP LAN máy dev — đổi theo Wi-Fi
+const LAN_DEV_URL = "http://192.168.100.133:4000/api"; // IP LAN máy dev — đổi theo Wi-Fi
 // Máy chủ thật — dùng cho bản cài từ store/TestFlight khi thiếu biến EXPO_PUBLIC_API_URL.
 // her-52 (28/08/2026): 4 lần `eas update` quên kèm biến → bundle OTA nhúng IP LAN, điện thoại
 // khách không gọi được API (Tổng quan/Lịch tập/Tài khoản trắng). Bản production KHÔNG bao giờ

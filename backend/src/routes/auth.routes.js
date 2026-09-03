@@ -38,10 +38,20 @@ router.post("/login", wrap(async (req, res) => {
     });
   }
 
-  const user = await User.findOne({ phone: phoneKey });
+  // her-53: chỉ tài khoản CHƯA xoá đăng nhập được. SĐT đã xoá có thể được cấp lại cho tài khoản
+  // mới -> luôn tìm bản chưa xoá trước.
+  const user = await User.findOne({ phone: phoneKey, deletedAt: null });
   if (!user) {
-    // So sánh với hash giả để thời gian trả lời không tiết lộ "SĐT này có tài khoản hay không"
-    await bcrypt.compare(password, "$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy");
+    // Không có tài khoản đang dùng: nếu có tài khoản ĐÃ XOÁ cùng SĐT và mật khẩu đúng thì nói rõ
+    // "đã bị xoá" (cùng nguyên tắc với "bị khoá": chỉ lộ tình trạng khi có mật khẩu — H6/L9)
+    const deleted = await User.findOne({ phone: phoneKey, deletedAt: { $ne: null } }).sort({ deletedAt: -1 });
+    if (deleted && (await bcrypt.compare(password, deleted.passwordHash))) {
+      return res.status(403).json({ error: "Tài khoản đã bị xoá, vui lòng liên hệ quầy lễ tân" });
+    }
+    if (!deleted) {
+      // So sánh với hash giả để thời gian trả lời không tiết lộ "SĐT này có tài khoản hay không"
+      await bcrypt.compare(password, "$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy");
+    }
     recordFailure(phoneKey);
     return res.status(401).json({ error: "Sai số điện thoại hoặc mật khẩu" });
   }
@@ -82,7 +92,7 @@ router.post("/register", wrap(async (req, res) => {
   if (!isValidPassword(password)) {
     return res.status(400).json({ error: `Mật khẩu tối thiểu ${MIN_PASSWORD_LENGTH} ký tự` });
   }
-  const existing = await User.findOne({ phone: phone.trim() });
+  const existing = await User.findOne({ phone: phone.trim(), deletedAt: null }); // SĐT đã xoá dùng lại được (her-53)
   if (existing) return res.status(409).json({ error: "Số điện thoại đã được đăng ký" });
 
   const passwordHash = await bcrypt.hash(password, 10);

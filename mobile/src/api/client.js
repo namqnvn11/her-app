@@ -68,5 +68,5 @@ export const api = {
   get: (path, query) => request(path, { method: "GET", query }),
   post: (path, body) => request(path, { method: "POST", body }),
   patch: (path, body) => request(path, { method: "PATCH", body }),
-  delete: (path) => request(path, { method: "DELETE" }),
+  delete: (path, body) => request(path, { method: "DELETE", body }), // body tuỳ chọn (her-57: gỡ push token)
 };

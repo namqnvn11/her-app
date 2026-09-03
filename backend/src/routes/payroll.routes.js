@@ -4,6 +4,7 @@ const Trainer = require("../models/Trainer");
 const TrainerRate = require("../models/TrainerRate");
 const { requireAuth, requireRole } = require("../middleware/auth");
 const { computeMonth, monthRange } = require("../utils/payroll");
+const { deletedTrainerIds } = require("../utils/activeTrainers");
 const wrap = require("../utils/asyncHandler");
 
 const router = express.Router();
@@ -26,7 +27,8 @@ function parseAmount(value, label) {
 
 // GET /api/payroll/settings — danh sách HLV + mức hiện hành
 router.get("/settings", adminOnly, wrap(async (req, res) => {
-  const trainers = await Trainer.find({}).sort({ name: 1 });
+  // her-53: HLV đã xoá mềm không còn trong danh sách thiết lập (HLV bị KHOÁ vẫn hiện — chỉ tạm ngưng)
+  const trainers = await Trainer.find({ _id: { $nin: await deletedTrainerIds() } }).sort({ name: 1 });
   const rates = await TrainerRate.find({ effectiveFrom: { $lte: new Date() } }).sort({ effectiveFrom: 1 });
   const currentByTrainer = {};
   for (const r of rates) currentByTrainer[r.trainerId.toString()] = r; // sort tăng -> bản cuối thắng

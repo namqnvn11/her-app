@@ -8,6 +8,7 @@ const { requireAuth } = require("../middleware/auth");
 const { canCustomerCancel, getMinCancelHours } = require("../utils/cancelRule");
 const { isTrainerLocked } = require("../utils/activeTrainers");
 const { chargeSession, packageErrorMessage } = require("../utils/packages");
+const { notifyBooking } = require("../utils/notify");
 const wrap = require("../utils/asyncHandler");
 
 const router = express.Router();
@@ -50,6 +51,10 @@ router.post("/", wrap(async (req, res) => {
     }
     if (target.role !== "customer") {
       return res.status(400).json({ error: "Chỉ đặt lịch hộ được cho tài khoản học viên" });
+    }
+    // her-53: tài khoản đã xoá mềm — nói đúng "đã xoá" (xoá cũng đặt isActive=false nên kiểm trước)
+    if (target.deletedAt) {
+      return res.status(400).json({ error: `Tài khoản ${target.name} đã bị xoá — không đặt lịch được nữa` });
     }
     if (target.isActive === false) {
       return res.status(400).json({
@@ -194,6 +199,30 @@ router.post("/", wrap(async (req, res) => {
         await Booking.updateOne({ _id: booking._id }, { $set: { trainerId: freshClass.coachId } });
         booking.trainerId = freshClass.coachId;
       }
+      // her-53 (review #3): khách bấm đặt ĐÚNG lúc quầy xoá tài khoản — requireAuth đã qua
+      // trước khi deletedAt được ghi. Kiểm lại SAU khi ghi booking (đối xứng với DELETE
+      // /accounts kiểm lại booking sau khi ghi deletedAt): đã xoá thì gỡ booking vừa tạo,
+      // trả chỗ + hoàn buổi. Không để tài khoản đã xoá giữ chỗ lớp mà không ai huỷ được.
+      const freshUser = await User.findById(targetUserId).select("deletedAt");
+      if (!freshUser || freshUser.deletedAt) {
+        await Booking.deleteOne({ _id: booking._id });
+        await GymClass.updateOne({ _id: classId }, { $inc: { bookedCount: -1 } });
+        await refundSession();
+        return res.status(400).json({ error: "Tài khoản đã bị xoá — không đặt lịch được nữa" });
+      }
+      // her-55 (review #1/#2): gói vừa bị XOÁ hoặc SỬA (bộ môn/loại hình/hạn) đúng lúc đặt — chargeSession
+      // đọc gói trước khi quầy ghi. Kiểm lại SAU khi ghi booking; lệch thì gỡ booking, trả chỗ, hoàn buổi.
+      const freshPkg = await Package.findById(pkg._id).select("deletedAt serviceTypes format expiresAt");
+      const pkgStillFits =
+        freshPkg && !freshPkg.deletedAt &&
+        freshPkg.serviceTypes.includes(gymClass.serviceType) && freshPkg.format === gymClass.format &&
+        (freshPkg.expiresAt == null || freshPkg.expiresAt >= gymClass.startAt);
+      if (!pkgStillFits) {
+        await Booking.deleteOne({ _id: booking._id });
+        await GymClass.updateOne({ _id: classId }, { $inc: { bookedCount: -1 } });
+        await refundSession();
+        return res.status(400).json({ error: "Gói tập vừa được quầy sửa hoặc xoá — kéo làm mới rồi đặt lại" });
+      }
     } catch (err) {
       await GymClass.updateOne({ _id: classId }, { $inc: { bookedCount: -1 } }).catch((e) =>
         console.error("[seat-release-failed] lớp có thể kẹt chỗ ảo, cần kiểm tra tay:", {
@@ -207,6 +236,11 @@ router.post("/", wrap(async (req, res) => {
       }
       throw err;
     }
+
+    // her-57: báo cho admin/lễ tân/HLV của buổi (không báo người bấm). Lỗi ở đây không làm hỏng
+    // booking đã thành công — notifyBooking tự log.
+    const customer = String(targetUserId) === String(req.user._id) ? req.user : await User.findById(targetUserId).select("name");
+    if (customer) await notifyBooking("created", { booking, gymClass, customer, actor: req.user });
 
     res.status(201).json({
       booking: {
@@ -302,6 +336,7 @@ router.delete("/:id", wrap(async (req, res) => {
         serviceTypes: booking.serviceType,
         format: booking.format,
         usedSessions: { $gt: 0 },
+        deletedAt: null, // her-55: đoán gói thì không đoán vào gói đã xoá (review #4)
       };
       const pkg =
         (await Package.findOne({ ...match, expiresAt: { $gte: new Date() } }).sort({ expiresAt: -1 })) ||
@@ -320,6 +355,14 @@ router.delete("/:id", wrap(async (req, res) => {
       error: "Lịch đã được hủy nhưng hoàn buổi gặp lỗi — vui lòng liên hệ lễ tân kiểm tra lại số buổi",
     });
   }
+
+  // her-57: báo hủy cho admin/lễ tân/HLV của buổi (trừ người bấm). Lớp/khách không còn (dữ liệu
+  // bất thường) thì bỏ qua thông báo — hủy vẫn thành công.
+  const [customer, gymClass] = await Promise.all([
+    isOwner ? req.user : User.findById(booking.userId).select("name"),
+    GymClass.findById(booking.classId).select("name coachId"),
+  ]);
+  if (customer && gymClass) await notifyBooking("cancelled", { booking, gymClass, customer, actor: req.user });
 
   res.json({ ok: true });
 }));

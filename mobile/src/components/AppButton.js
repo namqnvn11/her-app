@@ -2,14 +2,16 @@ import { TouchableOpacity, Text, StyleSheet, View } from "react-native";
 import { useTheme } from "../theme";
 
 // variant: "primary" (nền terracotta) | "outline" (viền terracotta) | "ghost" (viền xám)
-export default function AppButton({ children, onPress, variant = "primary", disabled, icon, style }) {
+// danger: cùng hình dạng nhưng đổi màu sang c.danger (nút Xoá — her-53) để nhìn là biết hành động nặng
+export default function AppButton({ children, onPress, variant = "primary", disabled, icon, style, danger = false }) {
   const { c } = useTheme();
   const isPrimary = variant === "primary";
   const isOutline = variant === "outline";
+  const accent = danger ? c.danger : c.accent;
 
-  const backgroundColor = disabled ? c.line : isPrimary ? c.primary : "transparent";
-  const borderColor = isOutline ? c.accent : c.line;
-  const color = disabled ? c.inkSoft : isPrimary ? c.primaryOn : isOutline ? c.accent : c.ink;
+  const backgroundColor = disabled ? c.line : isPrimary ? (danger ? c.danger : c.primary) : "transparent";
+  const borderColor = isOutline ? accent : c.line;
+  const color = disabled ? c.inkSoft : isPrimary ? (danger ? "#fff" : c.primaryOn) : isOutline ? accent : danger ? c.danger : c.ink;
 
   return (
     <TouchableOpacity

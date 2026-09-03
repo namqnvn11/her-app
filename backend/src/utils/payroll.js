@@ -3,6 +3,7 @@ const Booking = require("../models/Booking");
 const Trainer = require("../models/Trainer");
 const TrainerRate = require("../models/TrainerRate");
 const { FORMATS, FORMAT_RATE_FIELD } = require("./formats");
+const { deletedTrainerIds } = require("./activeTrainers");
 
 // ---- Tính bảng lương 1 tháng (mục 7) ----
 // Nguyên tắc (chốt 16/08, cập nhật her-35 19/08 — xem testcase_her-12/her-35):
@@ -39,7 +40,7 @@ async function computeMonth(month) {
   const range = monthRange(month);
   if (!range) return null;
 
-  const [trainers, allRates, bookings] = await Promise.all([
+  const [allTrainers, allRates, bookings, deletedIds] = await Promise.all([
     Trainer.find({}).sort({ name: 1 }),
     TrainerRate.find({ effectiveFrom: { $lt: range.to } }).sort({ effectiveFrom: 1 }),
     Booking.find({
@@ -48,6 +49,7 @@ async function computeMonth(month) {
       startAt: { $gte: range.from, $lt: range.to },
       classId: { $ne: null }, // DB thật chưa reseed có thể còn booking PT cũ không classId
     }).select("trainerId classId format startAt"),
+    deletedTrainerIds(),
   ]);
 
   const ratesByTrainer = {};
@@ -67,6 +69,11 @@ async function computeMonth(month) {
     if (!map.has(key)) map.set(key, { format: b.format, startAt: b.startAt, attendees: 0 });
     map.get(key).attendees += 1;
   }
+
+  // her-53 (D11): HLV đã XOÁ MỀM chỉ hiện ở tháng có buổi dạy thật (lịch sử không mất);
+  // tháng không dạy buổi nào thì ẩn — HLV tạo nhầm không nằm mãi trong bảng lương.
+  const deletedSet = new Set(deletedIds.map(String));
+  const trainers = allTrainers.filter((t) => !deletedSet.has(t._id.toString()) || sessionsByTrainer[t._id.toString()]);
 
   // HLV có buổi dạy nhưng hồ sơ Trainer không còn (dữ liệu bất thường) -> vẫn hiện 1 dòng
   // "(HLV đã gỡ hồ sơ)" thay vì rơi im lặng khỏi bảng (review her-12 V3)

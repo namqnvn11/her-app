@@ -8,15 +8,35 @@ const HAS_SESSIONS_LEFT = {
   },
 };
 
+// Số buổi còn lại để xếp thứ tự trừ — gói không giới hạn buổi coi như vô hạn (xếp cuối)
+const remainingOf = (p) => (p.totalSessions == null ? Infinity : p.totalSessions - p.usedSessions);
+
+// So sánh gói KHÔNG thời hạn (her-54, chủ dự án chốt 03/09): ÍT buổi còn lại hơn trừ trước
+// (dọn gói lẻ trước), bằng nhau thì gói kích hoạt trước, cuối cùng theo id cho tất định.
+// Dùng chung cho chargeSession và thứ tự hiển thị ở /me/packages (1 nguồn).
+function byRemainingThenActivation(a, b) {
+  const ra = remainingOf(a);
+  const rb = remainingOf(b);
+  if (ra !== rb) return ra - rb;
+  const aa = new Date(a.activatedAt).getTime();
+  const ba = new Date(b.activatedAt).getTime();
+  if (aa !== ba) return aa - ba;
+  return String(a._id || a.id).localeCompare(String(b._id || b.id));
+}
+
 // Trừ 1 buổi ATOMIC theo H7 mới (her-35): gói khớp = CHỨA bộ môn của lớp (mảng
-// serviceTypes, match phần tử) + ĐÚNG loại hình. Thứ tự Q4 (12/08/2026) giữ nguyên:
+// serviceTypes, match phần tử) + ĐÚNG loại hình. Thứ tự Q4 (12/08/2026, sửa 03/09 her-54):
 // 1) gói CÓ thời hạn còn phủ ngày tập — gói sắp hết hạn trừ TRƯỚC
-// 2) hết mới tới gói KHÔNG thời hạn — gói kích hoạt trước trừ trước
-// 2 lệnh findOneAndUpdate nối tiếp, mỗi lệnh tự chống race (C3) — không read-modify-write.
+// 2) hết mới tới gói KHÔNG thời hạn — gói ÍT BUỔI CÒN LẠI hơn trừ trước (trước 03/09: kích hoạt trước)
+// Mỗi lệnh ghi là findOneAndUpdate có điều kiện "còn buổi" nên tự chống race (C3) — không
+// read-modify-write. Bước 2 không sort được theo hiệu totalSessions-usedSessions trong Mongo nên
+// đọc danh sách ứng viên, xếp ở đây, rồi thử ghi có điều kiện TỪNG gói theo thứ tự: gói vừa bị
+// request khác trừ hết trong khe đọc-ghi thì lệnh ghi không khớp -> chuyển sang gói kế tiếp.
 // Gói không giới hạn buổi vẫn +1 usedSessions (thống kê + hoàn buổi đối xứng khi hủy — C2).
 // Gói đang BẢO LƯU (pausedAt != null) không được trừ (Q11 16/08).
 async function chargeSession(userId, { serviceType, format }, startAt) {
-  const match = { userId, serviceTypes: serviceType, format, pausedAt: null };
+  // her-55: gói đã xoá mềm không bao giờ được chọn
+  const match = { userId, serviceTypes: serviceType, format, pausedAt: null, deletedAt: null };
   const dated = await Package.findOneAndUpdate(
     // $gte với Date không match expiresAt null (type bracketing của MongoDB)
     { ...match, expiresAt: { $gte: startAt }, ...HAS_SESSIONS_LEFT },
@@ -25,11 +45,19 @@ async function chargeSession(userId, { serviceType, format }, startAt) {
     { sort: { expiresAt: 1, activatedAt: 1, _id: 1 }, new: true }
   );
   if (dated) return dated;
-  return Package.findOneAndUpdate(
-    { ...match, expiresAt: null, ...HAS_SESSIONS_LEFT },
-    { $inc: { usedSessions: 1 } },
-    { sort: { activatedAt: 1, _id: 1 }, new: true }
-  );
+
+  const candidates = await Package.find({ ...match, expiresAt: null, ...HAS_SESSIONS_LEFT })
+    .select("totalSessions usedSessions activatedAt");
+  candidates.sort(byRemainingThenActivation);
+  for (const c of candidates) {
+    const charged = await Package.findOneAndUpdate(
+      { _id: c._id, pausedAt: null, expiresAt: null, ...HAS_SESSIONS_LEFT },
+      { $inc: { usedSessions: 1 } },
+      { new: true }
+    );
+    if (charged) return charged;
+  }
+  return null;
 }
 
 // Chẩn đoán lý do không trừ được buổi — chỉ đọc, trả message tiếng Việt nói rõ
@@ -41,13 +69,13 @@ async function packageErrorMessage(userId, { serviceType, format }, startAt, { f
   const label = labelOfSync(serviceType);
   const who = forStaff ? "học viên này" : "bạn";
   const owner = forStaff ? "của học viên" : "của bạn";
-  const anyOfType = await Package.findOne({ userId, serviceTypes: serviceType });
+  const anyOfType = await Package.findOne({ userId, serviceTypes: serviceType, deletedAt: null }); // her-55: bỏ gói đã xoá
   if (!anyOfType) return `Buổi này cần gói có bộ môn ${label} — ${who} chưa có gói ${label}`;
-  const rightFormat = await Package.findOne({ userId, serviceTypes: serviceType, format });
+  const rightFormat = await Package.findOne({ userId, serviceTypes: serviceType, format, deletedAt: null });
   if (!rightFormat) {
     return `Buổi này là loại hình ${format} — ${who} chưa có gói ${label} ${format}`;
   }
-  const base = { userId, serviceTypes: serviceType, format };
+  const base = { userId, serviceTypes: serviceType, format, deletedAt: null };
   const notPaused = await Package.findOne({ ...base, pausedAt: null });
   if (!notPaused) {
     return forStaff
@@ -77,6 +105,14 @@ async function packageErrorMessage(userId, { serviceType, format }, startAt, { f
     : `Gói ${label} ${format} đã hết buổi, vui lòng gia hạn`;
 }
 
+// her-53 (D9): gói đã có lần THU NỢ sau khi bán? Dòng thu lúc bán mang đúng thời điểm activatedAt
+// (route bán gói dùng chung 1 biến), dòng /pay mang thời điểm thu -> muộn hơn. Không đếm số dòng
+// vì gói bán chưa thu đồng nào rồi thu nợ 1 lần cũng chỉ có 1 dòng.
+function hasDebtPayment(p) {
+  const soldAt = p.activatedAt ? p.activatedAt.getTime() : 0;
+  return (p.payments || []).some((x) => x.at && x.at.getTime() > soldAt);
+}
+
 // Chuẩn hoá gói trả cho app (cả app khách lẫn nội bộ) — null = không giới hạn.
 // paidAmount null = gói cũ trước đợt thanh toán, coi như đã thu đủ (quyết định 16/08).
 function serializePackage(p) {
@@ -102,8 +138,12 @@ function serializePackage(p) {
     debt: Math.max(p.price - paidAmount, 0),
     isPaid: paidAmount >= p.price,
     pausedAt: p.pausedAt || null,
+    // her-53: số dòng trong sổ thu — app dựa vào đây để biết còn sửa tay "số đã thu" được không (D9)
+    paymentCount: Array.isArray(p.payments) ? p.payments.length : 0,
+    // true = đã có lần thu nợ -> app khoá khối "Thu đủ/Còn thiếu" khi sửa gói (cùng luật với server)
+    paidLocked: hasDebtPayment(p),
     status: paused ? "paused" : expired ? "expired" : usedUp ? "used_up" : "active",
   };
 }
 
-module.exports = { chargeSession, packageErrorMessage, serializePackage, HAS_SESSIONS_LEFT };
+module.exports = { chargeSession, packageErrorMessage, serializePackage, hasDebtPayment, byRemainingThenActivation, HAS_SESSIONS_LEFT };

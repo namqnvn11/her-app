@@ -6,7 +6,7 @@ import { useTheme } from "../theme";
 // her-17: hộp XÁC NHẬN dùng chung cho các hành động nhạy cảm (cấp lại mật khẩu, khoá tài
 // khoản, xoá khung giờ...) — góp ý chủ dự án 16/08: không được "click 1 cái là chạy ngay".
 // props: visible, title, message, confirmLabel, danger?, busy?, onConfirm, onClose
-export default function ConfirmSheet({ visible, title, message, confirmLabel = "Xác nhận", busy = false, onConfirm, onClose }) {
+export default function ConfirmSheet({ visible, title, message, confirmLabel = "Xác nhận", danger = false, busy = false, onConfirm, onClose }) {
   const { c } = useTheme();
   return (
     <FormSheet visible={visible} title={title} onClose={() => { if (!busy) onClose?.(); }}>
@@ -18,7 +18,7 @@ export default function ConfirmSheet({ visible, title, message, confirmLabel = "
           </AppButton>
         </View>
         <View style={{ flex: 1 }}>
-          <AppButton disabled={busy} onPress={onConfirm}>
+          <AppButton disabled={busy} danger={danger} onPress={onConfirm}>
             {busy ? "Đang thực hiện..." : confirmLabel}
           </AppButton>
         </View>

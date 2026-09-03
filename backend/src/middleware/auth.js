@@ -19,6 +19,8 @@ async function requireAuth(req, res, next) {
   try {
     const user = await User.findById(payload.sub);
     if (!user) return res.status(401).json({ error: "Tài khoản không còn tồn tại" });
+    // Xoá mềm (her-53): 401 để app tự đăng xuất — kiểm TRƯỚC isActive vì xoá cũng đặt isActive=false
+    if (user.deletedAt) return res.status(401).json({ error: "Tài khoản đã bị xoá" });
     if (user.isActive === false) return res.status(403).json({ error: "Tài khoản đã bị khoá" });
     // Token cấp trước lần đổi mật khẩu gần nhất -> hết hiệu lực (her-14 A2). iat tính bằng
     // GIÂY, trừ hao 2s lệch đồng hồ để phiên VỪA đổi mật khẩu tự đăng nhập lại không bị kẹt.

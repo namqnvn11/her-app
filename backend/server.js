@@ -22,6 +22,7 @@ const disciplinesRoutes = require("./src/routes/disciplines.routes");
 const autoScheduleRoutes = require("./src/routes/autoSchedule.routes");
 const settingsRoutes = require("./src/routes/settings.routes");
 const leadsRoutes = require("./src/routes/leads.routes");
+const notificationsRoutes = require("./src/routes/notifications.routes");
 
 const app = express();
 // her-52 (28/08/2026): API toàn dữ liệu động → KHÔNG phát ETag và cấm cache. Trước đây Express tự
@@ -50,6 +51,7 @@ app.use("/api/disciplines", disciplinesRoutes);
 app.use("/api/auto-schedule", autoScheduleRoutes);
 app.use("/api/settings", settingsRoutes);
 app.use("/api/leads", leadsRoutes);
+app.use("/api/notifications", notificationsRoutes);
 
 app.use((req, res) => res.status(404).json({ error: "Không tìm thấy đường dẫn API" }));
 

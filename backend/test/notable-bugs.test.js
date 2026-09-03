@@ -118,12 +118,22 @@ test("L4: quyền lễ tân KHÔNG đổi — vẫn không đụng được tài
 
 // ---------- L5: bỏ xoá, khoá HLV ẩn khỏi danh sách ----------
 
-test("L5: endpoint xoá tài khoản trả 410 với hướng dẫn dùng nút Khoá", async () => {
+// her-53 (03/09/2026): xoá quay lại dưới dạng XOÁ MỀM — bản ghi và lịch sử KHÔNG mất (đúng tinh
+// thần L5), tài khoản chỉ bị ẩn. Chi tiết ở test/soft-delete-package-edit.test.js.
+test("L5: xoá tài khoản là xoá MỀM — bản ghi còn trong DB, chỉ ẩn khỏi danh sách", async () => {
   const admin = await login("0999999999");
-  const anyCustomer = (await call(S, "/accounts?role=customer", { token: admin.token })).data.accounts[0];
-  const r = await call(S, `/accounts/${anyCustomer.id}`, { method: "DELETE", token: admin.token });
-  assert.equal(r.status, 410);
-  assert.match(r.data.error, /thay bằng khoá/);
+  const created = await call(S, "/accounts", {
+    method: "POST", token: admin.token,
+    body: { name: "Khach tao nham L5", phone: "0966000055", password: "123456", role: "customer" },
+  });
+  assert.equal(created.status, 201, JSON.stringify(created.data));
+  const id = created.data.account.id;
+  const r = await call(S, `/accounts/${id}`, { method: "DELETE", token: admin.token });
+  assert.equal(r.status, 200, JSON.stringify(r.data));
+  const doc = await mongoose.connection.db.collection("users").findOne({ _id: new mongoose.Types.ObjectId(id) });
+  assert.ok(doc && doc.deletedAt, "bản ghi vẫn còn, có deletedAt");
+  const list = await call(S, "/accounts?role=customer", { token: admin.token });
+  assert.ok(!list.data.accounts.some((a) => a.id === id), "không còn trong danh sách");
 });
 
 test("L5: khoá tài khoản HLV -> ẩn khỏi danh sách đặt lịch & xếp lịch; HLV không có tài khoản vẫn hiện", async () => {

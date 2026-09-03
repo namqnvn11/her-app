@@ -12,6 +12,7 @@ const EXPIRING_DAYS = 7;
 // Trả kèm tổng nợ từng khách để danh sách ghi rõ "nợ 400.000".
 async function debtCustomers() {
   const pkgs = await Package.find({
+    deletedAt: null, // her-55: gói đã xoá không còn là nợ
     paidAmount: { $ne: null },
     $expr: { $lt: ["$paidAmount", "$price"] },
   }).select("userId price paidAmount");
@@ -30,6 +31,7 @@ async function debtCustomers() {
 async function expiringPackages(now = new Date()) {
   const soonEnd = new Date(now.getTime() + EXPIRING_DAYS * 24 * 3600 * 1000);
   const pkgs = await Package.find({
+    deletedAt: null, // her-55
     pausedAt: null,
     expiresAt: { $gte: now, $lte: soonEnd },
     $or: [{ totalSessions: null }, { $expr: { $lt: ["$usedSessions", "$totalSessions"] } }],

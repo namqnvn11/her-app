@@ -379,6 +379,60 @@ test("Q4: nhiều gói cùng loại -> trừ gói CÓ HẠN gần hết trước
   assert.equal(await used(pkgSoon.id), 0, "hoàn buổi phải về đúng gói đã trừ");
 });
 
+// ---------- her-54 (03/09): gói KHÔNG thời hạn -> ít buổi còn lại hơn trừ trước ----------
+
+test("her-54: 2 gói không hạn cùng loại -> trừ gói ÍT buổi còn lại hơn (dù mua sau); có gói có hạn thì gói có hạn vẫn trước", async () => {
+  const kh = await createCustomer();
+  const big = await createPackage(kh.user.id, { name: "Pilates 10 buổi (mua trước)", serviceTypes: ["pilates"], format: "1:1", price: 1, totalSessions: 10 });
+  const small = await createPackage(kh.user.id, { name: "Pilates 3 buổi (mua sau)", serviceTypes: ["pilates"], format: "1:1", price: 1, totalSessions: 3 });
+  const used = async (id) => (await Package.findById(id)).usedSessions;
+
+  const c1 = await createClass({ serviceType: "pilates", format: "1:1", hour: 1300 });
+  const r1 = await book(kh.token, c1);
+  assert.equal(r1.status, 201, JSON.stringify(r1.data));
+  assert.equal(await used(small.id), 1, "phải trừ gói ÍT buổi còn lại hơn dù mua sau");
+  assert.equal(await used(big.id), 0);
+
+  // /me/packages xếp gói không hạn theo cùng thứ tự trừ (ít buổi còn lại lên trước)
+  const me = await call(S, "/me/packages", { token: kh.token });
+  assert.deepEqual(me.data.packages.map((p) => p.name), [small.name, big.name]);
+
+  // Còn lại bằng nhau (small 2/3, chỉnh big còn 2) -> gói kích hoạt trước (big) trừ trước
+  await Package.updateOne({ _id: big.id }, { $set: { usedSessions: 8 } });
+  const c2 = await createClass({ serviceType: "pilates", format: "1:1", hour: 1302 });
+  assert.equal((await book(kh.token, c2)).status, 201);
+  assert.equal(await used(big.id), 9, "bằng nhau thì gói mua trước trừ trước");
+  assert.equal(await used(small.id), 1);
+
+  // Thêm gói CÓ hạn -> gói có hạn luôn trừ trước, bất kể số buổi
+  const dated = await createPackage(kh.user.id, { name: "Pilates 20 buổi 60 ngày", serviceTypes: ["pilates"], format: "1:1", price: 1, totalSessions: 20, durationDays: 60 });
+  const c3 = await createClass({ serviceType: "pilates", format: "1:1", hour: 1304 });
+  assert.equal((await book(kh.token, c3)).status, 201);
+  assert.equal(await used(dated.id), 1, "có gói có hạn thì gói có hạn trừ trước");
+  assert.equal(await used(small.id), 1);
+  assert.equal(await used(big.id), 9);
+});
+
+test("her-54 race: 2 gói không hạn mỗi gói còn 1 buổi + 2 đặt song song -> cả hai thành công, mỗi gói trừ đúng 1, không gói nào âm/quá", async () => {
+  const kh = await createCustomer();
+  const a = await createPackage(kh.user.id, { name: "A 1 buổi", serviceTypes: ["pilates"], format: "1:1", price: 1, totalSessions: 1 });
+  const b = await createPackage(kh.user.id, { name: "B 1 buổi", serviceTypes: ["pilates"], format: "1:1", price: 1, totalSessions: 1 });
+  const cA = await createClass({ serviceType: "pilates", format: "1:1", hour: 1310 });
+  const cB = await createClass({ serviceType: "pilates", format: "1:1", hour: 1312 });
+  const [rA, rB] = await Promise.all([book(kh.token, cA), book(kh.token, cB)]);
+  assert.equal(rA.status, 201, JSON.stringify(rA.data));
+  assert.equal(rB.status, 201, JSON.stringify(rB.data));
+  const pa = await Package.findById(a.id);
+  const pb = await Package.findById(b.id);
+  assert.equal(pa.usedSessions, 1);
+  assert.equal(pb.usedSessions, 1);
+  // Lần 3 hết gói -> báo đúng lý do, không âm
+  const cC = await createClass({ serviceType: "pilates", format: "1:1", hour: 1314 });
+  const rC = await book(kh.token, cC);
+  assert.equal(rC.status, 400);
+  assert.match(rC.data.error, /hết buổi/);
+});
+
 // ---------- Race (L2): 2 request song song với gói chỉ còn 1 buổi ----------
 
 test("race: gói còn đúng 1 buổi + 2 lớp cùng loại -> đúng 1 booking thành công, usedSessions = 1", async () => {
@@ -651,7 +705,7 @@ test("review-fix: giá không nguyên/quá 1 tỷ/tên quá dài -> 400", async 
   assert.equal(await Package.countDocuments({ userId: kh.user.id }), 0, "không được tạo gói nào từ input hỏng");
 });
 
-test("review-fix: Q4 vế 2 — 2 gói KHÔNG hạn cùng loại -> gói kích hoạt trước bị trừ trước", async () => {
+test("review-fix: Q4 vế 2 — 2 gói KHÔNG hạn cùng loại, còn lại BẰNG NHAU -> gói kích hoạt trước bị trừ trước (her-54: khác nhau thì ít buổi còn lại hơn trước)", async () => {
   const kh = await createCustomer();
   const p1 = await createPackage(kh.user.id, { name: "Gym som", serviceTypes: ["gym"], format: "1:1", price: 1, totalSessions: 5 });
   await new Promise((r) => setTimeout(r, 20));

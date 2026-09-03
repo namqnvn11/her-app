@@ -64,13 +64,16 @@ async function adminDashboard(month) {
 
   // Doanh thu = tiền THU TRONG THÁNG (nhật ký payments — review her-13 N1: nợ thu muộn phải
   // vào báo cáo tháng THU, không "bốc hơi"). Gói cũ chưa có nhật ký: phần đã thu tính vào
-  // tháng bán (createdAt). packagesSold/topPackages vẫn theo tháng bán.
+  // tháng bán. packagesSold/topPackages theo tháng bán.
+  // her-56: "tháng bán" = activatedAt (NGÀY BÁN quầy chọn, có thể nhập lùi cho gói cũ) — không
+  // phải createdAt (ngày gõ vào máy). her-55: gói bán nhầm rồi xoá mềm không tính tiền/số gói.
   const pkgs = await Package.find({
+    deletedAt: null,
     $or: [
-      { createdAt: { $gte: from, $lt: to } },
+      { activatedAt: { $gte: from, $lt: to } },
       { payments: { $elemMatch: { at: { $gte: from, $lt: to } } } },
     ],
-  }).select("name price paidAmount payments createdAt");
+  }).select("name price paidAmount payments activatedAt");
   let revenue = 0;
   let packagesSold = 0;
   const byName = {};
@@ -78,7 +81,7 @@ async function adminDashboard(month) {
     const pays = p.payments || [];
     const paysAll = pays.reduce((t, x) => t + x.amount, 0);
     revenue += pays.filter((x) => x.at >= from && x.at < to).reduce((t, x) => t + x.amount, 0);
-    if (p.createdAt >= from && p.createdAt < to) {
+    if (p.activatedAt >= from && p.activatedAt < to) {
       packagesSold += 1;
       byName[p.name] = (byName[p.name] || 0) + 1;
       // Phần đã thu KHÔNG có trong nhật ký (gói bán trước đợt này) -> tính vào tháng bán
@@ -88,7 +91,7 @@ async function adminDashboard(month) {
   }
   // Nợ CÒN TỒN toàn bộ (không chỉ gói bán tháng này) — khớp con số "khách nợ" của lễ tân
   const debtAgg = await Package.aggregate([
-    { $match: { paidAmount: { $ne: null }, $expr: { $lt: ["$paidAmount", "$price"] } } },
+    { $match: { deletedAt: null, paidAmount: { $ne: null }, $expr: { $lt: ["$paidAmount", "$price"] } } },
     { $group: { _id: null, d: { $sum: { $subtract: ["$price", "$paidAmount"] } } } },
   ]);
   const debt = debtAgg[0]?.d || 0;
@@ -154,10 +157,10 @@ async function adminDashboard(month) {
   // her-19: tháng XA NHẤT có dữ liệu (gói đầu tiên được bán / buổi điểm danh đầu tiên) —
   // app chỉ cho lùi filter tới đây, không lùi vô hạn về quá khứ trống
   const [firstPkg, firstAtt] = await Promise.all([
-    Package.findOne({}).sort({ createdAt: 1 }).select("createdAt"),
+    Package.findOne({ deletedAt: null }).sort({ activatedAt: 1 }).select("activatedAt"),
     Booking.findOne({ attendanceAt: { $ne: null }, status: "completed" }).sort({ startAt: 1 }).select("startAt"),
   ]);
-  const firsts = [firstPkg?.createdAt, firstAtt?.startAt].filter(Boolean);
+  const firsts = [firstPkg?.activatedAt, firstAtt?.startAt].filter(Boolean); // her-56: mốc = ngày bán
   const minDate = firsts.length ? new Date(Math.min(...firsts.map((d) => d.getTime()))) : now;
   const minMonth = `${minDate.getFullYear()}-${String(minDate.getMonth() + 1).padStart(2, "0")}`;
 

@@ -38,6 +38,10 @@ const packageSchema = new mongoose.Schema(
       ],
       default: [],
     },
+    // her-55 (03/09/2026): XOÁ MỀM gói bán nhầm — deletedAt != null: ẩn khỏi mọi danh sách, không
+    // dùng để đặt lịch, không tính doanh thu/nợ; booking cũ vẫn trỏ packageId (hủy vẫn hoàn -1).
+    deletedAt: { type: Date, default: null },
+    deletedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
   },
   { timestamps: true }
 );

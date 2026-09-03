@@ -2,7 +2,7 @@
   "expo": {
     "name": "HER - Pilates",
     "slug": "her-app",
-    "version": "1.0.2",
+    "version": "1.0.3",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -21,7 +21,8 @@
         "backgroundColor": "#FAF7F1"
       },
       "edgeToEdgeEnabled": true,
-      "package": "com.her.gymapp"
+      "package": "com.her.gymapp",
+      "googleServicesFile": "./google-services.json"
     },
     "ios": {
       "supportsTablet": false,
@@ -40,7 +41,8 @@
     },
     "owner": "namqnvn11",
     "plugins": [
-      "expo-font"
+      "expo-font",
+      "expo-notifications"
     ],
     "runtimeVersion": {
       "policy": "appVersion"

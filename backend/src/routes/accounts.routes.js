@@ -1,8 +1,11 @@
 const express = require("express");
+const mongoose = require("mongoose");
 const bcrypt = require("bcryptjs");
 const User = require("../models/User");
 const Trainer = require("../models/Trainer");
-const { requireAuth, requireManagement } = require("../middleware/auth");
+const Booking = require("../models/Booking");
+const GymClass = require("../models/GymClass");
+const { requireAuth, requireManagement, requireRole } = require("../middleware/auth");
 const { isValidPhone, isValidPassword, MIN_PASSWORD_LENGTH } = require("../utils/validators");
 const wrap = require("../utils/asyncHandler");
 const { isValidClassType, labelOf } = require("../utils/disciplines");
@@ -38,7 +41,8 @@ const FLAGS = ["debt", "expiring"];
 router.get("/", wrap(async (req, res) => {
   const allowed = ALLOWED_TO_MANAGE[req.user.role] || [];
   const { role, flag } = req.query;
-  const query = { role: role && allowed.includes(role) ? role : { $in: allowed } };
+  // her-53: tài khoản đã xoá mềm không hiện ở bất kỳ tab nào
+  const query = { role: role && allowed.includes(role) ? role : { $in: allowed }, deletedAt: null };
 
   let extraByUser = null; // { [userId]: { debt } | { expiringAt } } — gắn thêm vào từng dòng
   if (flag !== undefined) {
@@ -88,7 +92,8 @@ router.post("/", wrap(async (req, res) => {
   if (!isValidPassword(password)) {
     return res.status(400).json({ error: `Mật khẩu tối thiểu ${MIN_PASSWORD_LENGTH} ký tự` });
   }
-  const existing = await User.findOne({ phone: phone.trim() });
+  // SĐT của tài khoản ĐÃ XOÁ được dùng lại (her-53) — index unique cũng chỉ áp cho bản chưa xoá
+  const existing = await User.findOne({ phone: phone.trim(), deletedAt: null });
   if (existing) return res.status(409).json({ error: "Số điện thoại đã được đăng ký" });
 
   const passwordHash = await bcrypt.hash(password, 10);
@@ -136,7 +141,8 @@ router.post("/", wrap(async (req, res) => {
 // PATCH /api/accounts/:id  { name?, isActive?, password? }
 router.patch("/:id", wrap(async (req, res) => {
   const target = await User.findById(req.params.id);
-  if (!target) return res.status(404).json({ error: "Không tìm thấy tài khoản" });
+  // Đã xoá mềm = coi như không còn (her-53) — không khoá/mở/cấp mật khẩu cho tài khoản đã xoá
+  if (!target || target.deletedAt) return res.status(404).json({ error: "Không tìm thấy tài khoản" });
   if (!assertCanManage(req, target.role)) {
     return res.status(403).json({ error: "Bạn không có quyền sửa tài khoản này" });
   }
@@ -164,13 +170,65 @@ router.patch("/:id", wrap(async (req, res) => {
   res.json({ account: target.toPublicJSON() });
 }));
 
-// DELETE /api/accounts/:id -- ĐÃ GỠ theo quyết định 07/08/2026 (L5): xoá thật để lại
-// dữ liệu mồ côi (booking giữ chỗ lớp, hồ sơ HLV lơ lửng). Thay bằng khoá tài khoản
-// (PATCH isActive=false) — dữ liệu lịch sử giữ nguyên vẹn.
-router.delete("/:id", (req, res) => {
-  res.status(410).json({
-    error: "Chức năng xoá tài khoản đã được thay bằng khoá tài khoản. Hãy dùng nút Khoá.",
-  });
-});
+// DELETE /api/accounts/:id -- XOÁ MỀM (her-53, 03/09/2026). Lịch sử 07/08 (L5): xoá thật bị gỡ vì
+// để lại dữ liệu mồ côi. Nay chủ dự án cần xoá tài khoản TẠO NHẦM -> xoá mềm: chỉ đặt deletedAt
+// (+ isActive=false), booking/gói/lịch sử giữ nguyên, tài khoản ẩn khỏi mọi danh sách và không
+// đăng nhập được; SĐT dùng lại được cho tài khoản mới.
+// Tài khoản còn LỊCH TƯƠNG LAI thì chặn (D1): khách phải được huỷ lịch, lớp của HLV phải đổi
+// người dạy/xoá trước — xoá không được âm thầm làm hỏng buổi của người khác.
+// her-56 (03/09): CHỈ ADMIN được xoá — lễ tân 403 (chủ dự án chốt: các chức năng sửa/xoá mới chỉ admin).
+router.delete("/:id", requireRole("admin"), wrap(async (req, res) => {
+  if (!mongoose.isValidObjectId(req.params.id)) {
+    return res.status(400).json({ error: "Mã (ID) không hợp lệ" });
+  }
+  const target = await User.findById(req.params.id);
+  if (!target || target.deletedAt) return res.status(404).json({ error: "Không tìm thấy tài khoản" });
+  if (String(target._id) === String(req.user._id)) {
+    return res.status(403).json({ error: "Không thể tự xoá tài khoản của chính mình" });
+  }
+  if (!assertCanManage(req, target.role)) {
+    return res.status(403).json({ error: "Bạn không có quyền xoá tài khoản này" });
+  }
+
+  // Lịch TƯƠNG LAI còn giữ chỗ (D1). Booking: mọi trạng thái trừ "cancelled" — buổi được điểm
+  // danh sớm đã là completed/no_show nhưng chưa diễn ra xong vẫn tính (review #5, cùng quy ước
+  // với bookings.routes). HLV: mọi lớp chưa kết thúc.
+  const upcomingError = async (now) => {
+    if (target.role === "customer") {
+      const n = await Booking.countDocuments({ userId: target._id, status: { $ne: "cancelled" }, endAt: { $gt: now } });
+      if (n > 0) return `Học viên còn ${n} buổi sắp tới — huỷ lịch trước khi xoá tài khoản`;
+    }
+    if (target.role === "trainer" && target.trainerId) {
+      const n = await GymClass.countDocuments({ coachId: target.trainerId, endAt: { $gt: now } });
+      if (n > 0) return `HLV còn ${n} buổi dạy sắp tới — đổi HLV hoặc xoá buổi trước khi xoá tài khoản`;
+    }
+    return null;
+  };
+
+  const now = new Date();
+  let blocked = await upcomingError(now);
+  if (blocked) return res.status(400).json({ error: blocked });
+
+  // Điều kiện deletedAt: null -> 2 người bấm xoá cùng lúc thì chỉ 1 request ghi được
+  const deleted = await User.findOneAndUpdate(
+    { _id: target._id, deletedAt: null },
+    { $set: { deletedAt: now, deletedBy: req.user._id, isActive: false } },
+    { new: true }
+  );
+  if (!deleted) return res.status(404).json({ error: "Không tìm thấy tài khoản" });
+
+  // Kiểm LẠI sau khi ghi (review #3): khách/HLV có thể vừa đặt lịch/vừa được xếp lớp trong khe
+  // giữa lần đếm trên và lệnh ghi. Phía đặt lịch cũng kiểm lại deletedAt sau khi ghi booking —
+  // hai bên cùng "ghi rồi kiểm" nên không còn thứ tự nào để lọt. Có lịch thì hoàn tác xoá.
+  blocked = await upcomingError(now);
+  if (blocked) {
+    await User.updateOne(
+      { _id: target._id },
+      { $set: { deletedAt: null, deletedBy: null, isActive: target.isActive } }
+    );
+    return res.status(400).json({ error: blocked });
+  }
+  res.json({ ok: true, id: deleted._id });
+}));
 
 module.exports = router;

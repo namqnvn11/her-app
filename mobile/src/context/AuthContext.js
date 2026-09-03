@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useState, useCallback, useRef } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { api, setAuthToken, setSessionInvalidHandler } from "../api/client";
+import { registerPush, unregisterPush } from "../utils/push";
 import { cancelAllReminders } from "../utils/reminders";
 
 const AuthContext = createContext(null);
@@ -33,6 +34,7 @@ export function AuthProvider({ children }) {
           }
           setToken(active);
           setUser(user);
+          registerPush(user); // her-57: mở app lại cũng đăng ký token (máy mới / token đổi)
           setConfig(config || null);
           // Lễ tân/admin không dùng nhắc lịch — dọn thông báo còn sót của người dùng trước (B1)
           if (user.role === "reception" || user.role === "admin") cancelAllReminders();
@@ -63,6 +65,7 @@ export function AuthProvider({ children }) {
       setToken(token);
       setUser(user);
       setConfig(config || null);
+      registerPush(user); // her-57: không chờ — lỗi push không được chặn đăng nhập
       return { ok: true };
     } catch (err) {
       return { ok: false, error: err.message };
@@ -71,6 +74,7 @@ export function AuthProvider({ children }) {
 
   const logout = useCallback(async () => {
     cancelAllReminders(); // máy không được tiếp tục nhắc lịch của người đã đăng xuất (B1)
+    await unregisterPush(); // her-57: gỡ token TRƯỚC khi xoá phiên (cần token để gọi API)
     await AsyncStorage.removeItem(STORAGE_KEY);
     setAuthToken(null);
     tokenRef.current = null;

@@ -17,3 +17,7 @@ her_app_ky_thuat.md
 
 # macOS
 .DS_Store
+
+# her-57: khoá Firebase cho push Android — KHÔNG commit (bí mật)
+mobile/google-services.json
+mobile/*firebase-adminsdk*.json
