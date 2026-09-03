@@ -1,13 +1,13 @@
 // her-52 (28/08/2026): Android (okhttp) gửi If-None-Match → Express trả 304 thân rỗng → app trắng
 // (iOS tự lấy cache nên không lộ). API là dữ liệu động: KHÔNG ETag, luôn 200 + thân + no-store.
-// Không cần DB (chỉ gọi /health và 1 route trả lỗi 401) — server cổng 4291, DB her_test_z.
+// Không cần DB (chỉ gọi /health và 1 route trả lỗi 401) — server cổng 4331, DB her_test_z.
 const { test, before, after } = require("node:test");
 const assert = require("node:assert");
 const { spawn } = require("node:child_process");
 const path = require("node:path");
 
 const ROOT = path.join(__dirname, "..");
-const S = "http://localhost:4291/api";
+const S = "http://localhost:4331/api";
 let proc;
 
 async function waitHealthy() {
@@ -21,7 +21,7 @@ async function waitHealthy() {
 before(async () => {
   proc = spawn(process.execPath, ["server.js"], {
     cwd: ROOT, stdio: "ignore",
-    env: { ...process.env, PORT: "4291", MONGODB_URI: "mongodb://localhost:27017/her_test_z", JWT_SECRET: "testsecret" },
+    env: { ...process.env, PORT: "4331", MONGODB_URI: "mongodb://localhost:27017/her_test_z", JWT_SECRET: "testsecret" },
   });
   await waitHealthy();
 });
