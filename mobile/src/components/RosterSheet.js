@@ -3,6 +3,7 @@ import { View, Text, TextInput, TouchableOpacity, StyleSheet } from "react-nativ
 import FormSheet from "./FormSheet";
 import AttendanceToggle from "./AttendanceToggle";
 import AppButton from "./AppButton";
+import Avatar from "./Avatar"; // her-61
 import { api } from "../api/client";
 import { useTheme } from "../theme";
 
@@ -142,15 +143,14 @@ export default function RosterSheet({ classId, onClose, canClear = false, canCan
             style={[styles.row, i !== data.customers.length - 1 && { borderBottomWidth: 1, borderBottomColor: c.hairline }]}
           >
             <View style={styles.head}>
-              <View style={[styles.avatar, { backgroundColor: c.primaryTint }]}>
-                <Text style={[styles.avatarText, { color: c.accent }]}>
-                  {(k.name || "?").slice(0, 1).toUpperCase()}
-                </Text>
-              </View>
+              <Avatar url={k.avatarUrl} name={k.name} size={34} />
               <View style={{ flex: 1 }}>
                 <Text style={[styles.name, { color: c.ink }]}>{k.name}</Text>
                 {/* HLV không nhận field phone từ server — dòng này tự ẩn */}
                 {!!k.phone && <Text style={[styles.phone, { color: c.inkSoft }]}>{k.phone}</Text>}
+                {/* her-59: HLV cần biết trước giờ tập — server trả cho mọi role */}
+                {!!k.healthNotes && <Text style={[styles.note, { color: c.danger }]}>⚕ {k.healthNotes}</Text>}
+                {!!k.goals && <Text style={[styles.note, { color: c.inkSoft }]}>🎯 {k.goals}</Text>}
                 {/* her-40 (20/08): "Đã đến" CHỈ khi có điểm danh THẬT (attendanceAt). Buổi qua giờ
                     được hệ thống tự chuyển "đã tập" (sweep) mang status completed nhưng
                     attendanceAt = null — chưa ai điểm danh, không tính hoa hồng (her-10) —
@@ -175,8 +175,20 @@ export default function RosterSheet({ classId, onClose, canClear = false, canCan
                 onChanged={() => { load(); onChanged?.(); }}
                 onError={(msg) => setErrorMsg(msg)}
               />
+              {/* Hủy lịch (quầy) — nút nhỏ BÊN PHẢI dòng cho dễ bấm (góp ý 04/09); xác nhận vẫn hiện ngay dưới dòng */}
+              {canCancel && k.status === "booked" && confirmCancelId !== k.bookingId && (
+                <TouchableOpacity
+                  hitSlop={8}
+                  disabled={busy}
+                  onPress={() => setConfirmCancelId(k.bookingId)}
+                  style={[styles.cancelBtn, { borderColor: c.line }]}
+                  accessibilityLabel="Hủy lịch của khách này"
+                >
+                  <Text style={[styles.cancelBtnText, { color: c.danger }]}>Hủy</Text>
+                </TouchableOpacity>
+              )}
             </View>
-            {/* Hủy lịch (quầy) — xác nhận NGAY TRONG dòng, không mở chồng sheet */}
+            {/* Xác nhận hủy NGAY TRONG dòng, không mở chồng sheet */}
             {canCancel && k.status === "booked" && (
               confirmCancelId === k.bookingId ? (
                 <View style={styles.confirmRow}>
@@ -189,11 +201,7 @@ export default function RosterSheet({ classId, onClose, canClear = false, canCan
                     </AppButton>
                   </View>
                 </View>
-              ) : (
-                <TouchableOpacity hitSlop={8} style={styles.cancelLink} onPress={() => setConfirmCancelId(k.bookingId)}>
-                  <Text style={[styles.cancelText, { color: c.inkSoft }]}>Hủy lịch của khách này</Text>
-                </TouchableOpacity>
-              )
+              ) : null
             )}
           </View>
         ))}
@@ -253,14 +261,13 @@ const styles = StyleSheet.create({
   empty: { fontSize: 13, marginTop: 6 },
   row: { paddingVertical: 11 },
   head: { flexDirection: "row", alignItems: "center", gap: 12 },
-  avatar: { width: 34, height: 34, borderRadius: 17, alignItems: "center", justifyContent: "center" },
-  avatarText: { fontSize: 13, fontWeight: "800" },
   name: { fontSize: 13.5, fontWeight: "700" },
   phone: { fontSize: 11.5, marginTop: 1 },
+  note: { fontSize: 11.5, marginTop: 2, lineHeight: 15 },
   stateTxt: { fontSize: 11, fontWeight: "700", marginTop: 2 },
   confirmRow: { flexDirection: "row", gap: 8, marginTop: 10, marginLeft: 46 },
-  cancelLink: { marginTop: 8, marginLeft: 46, alignSelf: "flex-start" },
-  cancelText: { fontSize: 11.5, fontWeight: "700", textDecorationLine: "underline" },
+  cancelBtn: { borderWidth: 1.5, borderRadius: 999, paddingVertical: 6, paddingHorizontal: 12, marginLeft: 6 },
+  cancelBtnText: { fontSize: 12, fontWeight: "800" },
   // her-39: khối thêm học viên
   addLink: { marginTop: 12, alignSelf: "flex-start" },
   addText: { fontSize: 12.5, fontWeight: "800" },

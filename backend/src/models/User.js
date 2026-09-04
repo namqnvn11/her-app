@@ -1,4 +1,5 @@
 const mongoose = require("mongoose");
+const { GENDERS } = require("../utils/profileFields");
 
 const userSchema = new mongoose.Schema(
   {
@@ -8,6 +9,16 @@ const userSchema = new mongoose.Schema(
     email: { type: String, trim: true, lowercase: true },
     passwordHash: { type: String, required: true },
     avatarUrl: { type: String, default: null },
+    // her-59 (04/09/2026): hồ sơ mở rộng — đều không bắt buộc. Validate 1 chỗ ở utils/profileFields.js.
+    // HLV chỉ được xem healthNotes/goals của khách trong buổi mình dạy (không SĐT/email/khẩn cấp).
+    gender: { type: String, enum: [...GENDERS, null], default: null },
+    emergencyContact: {
+      type: { name: { type: String, default: "", trim: true }, phone: { type: String, default: "", trim: true } },
+      default: () => ({ name: "", phone: "" }),
+      _id: false,
+    },
+    healthNotes: { type: String, default: "", trim: true },
+    goals: { type: String, default: "", trim: true },
     // 3 tầng quyền: admin (chủ/quản trị cao nhất) > reception (lễ tân — xếp lịch HLV,
     // tạo & quản trị tài khoản) > trainer (HLV, chỉ xem lịch của chính mình).
     // "customer" là khách hàng, không nằm trong 3 tầng quản trị.
@@ -51,6 +62,10 @@ userSchema.methods.toPublicJSON = function () {
     phone: this.phone,
     email: this.email,
     avatarUrl: this.avatarUrl,
+    gender: this.gender || null,
+    emergencyContact: { name: this.emergencyContact?.name || "", phone: this.emergencyContact?.phone || "" },
+    healthNotes: this.healthNotes || "",
+    goals: this.goals || "",
     role: this.role,
     trainerId: this.trainerId,
     isActive: this.isActive,

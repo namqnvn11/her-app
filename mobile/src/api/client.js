@@ -64,8 +64,36 @@ async function request(path, { method = "GET", body, query } = {}) {
   return data;
 }
 
+// her-61: gửi FILE (multipart) — không đặt Content-Type để fetch tự thêm boundary.
+// `file` trên điện thoại: { uri, name, type }; trên web: Blob/File. Lỗi xử lý y như request().
+async function uploadFile(path, field, file) {
+  const fd = new FormData();
+  fd.append(field, file);
+  const headers = {};
+  if (currentToken) headers.Authorization = `Bearer ${currentToken}`;
+  let res;
+  try {
+    res = await fetch(`${API_BASE_URL}${path}`, { method: "POST", headers, body: fd });
+  } catch (err) {
+    throw new Error("Không gửi được ảnh lên máy chủ. Kiểm tra mạng rồi thử lại.");
+  }
+  const isJson = res.headers.get("content-type")?.includes("application/json");
+  const data = isJson ? await res.json() : null;
+  if (!res.ok) {
+    const error = new Error(data?.error || (res.status === 413 ? "Ảnh quá lớn — tối đa 10 MB" : `Lỗi ${res.status}`));
+    error.status = res.status;
+    if (currentToken && onSessionInvalid && (res.status === 401 || (res.status === 403 && (data?.error || "").includes("bị khoá")))) {
+      onSessionInvalid(error);
+    }
+    throw error;
+  }
+  if (data === null) throw new Error("Máy chủ trả về dữ liệu không hợp lệ.");
+  return data;
+}
+
 export const api = {
   get: (path, query) => request(path, { method: "GET", query }),
+  upload: uploadFile, // her-61
   post: (path, body) => request(path, { method: "POST", body }),
   patch: (path, body) => request(path, { method: "PATCH", body }),
   delete: (path, body) => request(path, { method: "DELETE", body }), // body tuỳ chọn (her-57: gỡ push token)

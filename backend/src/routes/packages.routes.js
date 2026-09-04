@@ -9,6 +9,8 @@ const { isValidFormat, packageShapeError } = require("../utils/formats");
 const Booking = require("../models/Booking");
 const { serializePackage, hasDebtPayment } = require("../utils/packages");
 const wrap = require("../utils/asyncHandler");
+const { monthRange } = require("../utils/payroll");
+const monthKey = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
 
 const router = express.Router();
 // Quyết định 12/08/2026 (Q2): admin VÀ lễ tân đều được tạo/tra cứu gói của học viên.
@@ -62,7 +64,7 @@ const MAX_SESSIONS = 10_000; // chặn gõ nhầm kiểu "1 tỷ buổi" (review
 const totalSessionsError = (n) =>
   !Number.isInteger(n) || n < 1 || n > MAX_SESSIONS ? "Số buổi phải là số nguyên dương, tối đa 10.000" : null;
 const paymentMethodError = (m) =>
-  PAYMENT_METHODS.includes(m) ? null : "Hình thức thanh toán phải là tiền mặt (cash) hoặc chuyển khoản (transfer)";
+  PAYMENT_METHODS.includes(m) ? null : "Hình thức thanh toán phải là tiền mặt (cash), chuyển khoản (transfer) hoặc cà thẻ (card)";
 // her-55: "số buổi đã tập" nhập tay (khách cũ có gói trước khi dùng app / tập thử trước khi mua)
 const usedSessionsError = (n, total) => {
   if (!Number.isInteger(n) || n < 0 || n > MAX_SESSIONS) return "Số buổi đã tập phải là số nguyên không âm, tối đa 10.000";
@@ -171,6 +173,69 @@ router.post("/", wrap(async (req, res) => {
     payments: paid > 0 ? [{ amount: paid, at: activatedAt, by: req.user._id }] : [],
   });
   res.status(201).json({ package: serializePackage(pkg) });
+}));
+
+// GET /api/packages?month=YYYY-MM&q=&page=&limit= — her-60 (04/09/2026): LỊCH SỬ GÓI BÁN toàn hệ thống
+// (admin + lễ tân — chốt phương án B). Tháng theo NGÀY BÁN activatedAt (khớp báo cáo her-56 F4),
+// bỏ trống = tháng này. q khớp tên (bỏ dấu, không phân biệt hoa thường) hoặc SĐT khách — lọc
+// khách bằng JS vì Mongo không bỏ dấu được (danh sách khách nhỏ, vài trăm). Gói xoá mềm không hiện;
+// khách xoá mềm thì gói VẪN hiện (doanh thu đã thu là thật) kèm customer.deleted = true.
+// summary = tổng của CẢ tháng (không phải trang đang xem) để quầy đối soát nhanh.
+const normVi = (str) => String(str || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/đ/g, "d");
+router.get("/", wrap(async (req, res) => {
+  const { month: monthRaw, q } = req.query;
+  const month = monthRaw === undefined || monthRaw === "" ? monthKey(new Date()) : monthRaw;
+  const range = monthRange(month);
+  if (!range) return res.status(400).json({ error: "Tháng không hợp lệ — dùng dạng YYYY-MM (vd 2026-08)" });
+  const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+  const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 30));
+
+  const filter = { deletedAt: null, activatedAt: { $gte: range.from, $lt: range.to } };
+  const needle = typeof q === "string" ? normVi(q.trim()) : "";
+  if (needle) {
+    const digits = needle.replace(/\D/g, "");
+    const customers = await User.find({ role: "customer" }).select("name phone");
+    const ids = customers
+      .filter((u) => normVi(u.name).includes(needle) || (digits && String(u.phone || "").includes(digits)))
+      .map((u) => u._id);
+    filter.userId = { $in: ids };
+  }
+
+  const [total, sums, minDoc, docs] = await Promise.all([
+    Package.countDocuments(filter),
+    Package.aggregate([
+      { $match: filter },
+      { $project: { price: 1, paid: { $ifNull: ["$paidAmount", "$price"] } } },
+      { $group: { _id: null, revenue: { $sum: "$paid" }, debt: { $sum: { $max: [{ $subtract: ["$price", "$paid"] }, 0] } } } },
+    ]),
+    Package.findOne({ deletedAt: null }).sort({ activatedAt: 1 }).select("activatedAt"),
+    Package.find(filter)
+      .sort({ activatedAt: -1, _id: -1 })
+      .skip((page - 1) * limit)
+      .limit(limit + 1) // dư 1 để biết còn trang sau (mẫu her-28)
+      .populate("userId", "name phone deletedAt avatarUrl"),
+  ]);
+  const hasMore = docs.length > limit;
+  if (hasMore) docs.pop();
+  res.json({
+    month,
+    page,
+    limit,
+    total,
+    hasMore,
+    minMonth: minDoc ? monthKey(minDoc.activatedAt) : month,
+    summary: { count: total, revenue: sums[0]?.revenue || 0, debt: sums[0]?.debt || 0 },
+    packages: docs.map((p) => ({
+      ...serializePackage(p),
+      customer: {
+        id: p.userId?._id || null,
+        name: p.userId?.name || "(đã xoá)",
+        phone: p.userId?.phone || "",
+        avatarUrl: p.userId?.avatarUrl || null,
+        deleted: !p.userId || !!p.userId.deletedAt,
+      },
+    })),
+  });
 }));
 
 // GET /api/packages/customer/:userId — toàn bộ gói (đang dùng + hết hạn) để tra cứu tại quầy

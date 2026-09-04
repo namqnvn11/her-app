@@ -3,6 +3,8 @@ node_modules/
 
 # Cấu hình local chứa bí mật (JWT_SECRET, chuỗi kết nối DB) — KHÔNG commit
 backend/.env
+# her-61: ảnh đại diện upload (dev/test) — không commit
+backend/uploads/
 
 # Expo / Metro
 mobile/.expo/

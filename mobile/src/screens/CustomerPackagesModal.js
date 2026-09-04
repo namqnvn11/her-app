@@ -24,6 +24,7 @@ const PACKAGE_KINDS = [
 const PAYMENT_OPTIONS = [
   ["cash", "Tiền mặt"],
   ["transfer", "Chuyển khoản"],
+  ["card", "Cà thẻ"], // her-58
 ];
 const STATUS_LABEL = { active: "Đang dùng", paused: "Bảo lưu", used_up: "Hết buổi", expired: "Hết hạn" };
 

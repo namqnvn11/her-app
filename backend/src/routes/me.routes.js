@@ -15,6 +15,9 @@ const { isValidClassType, labelOf } = require("../utils/disciplines");
 const { blockedMinutes, recordFailure, resetAttempts } = require("../utils/loginRateLimit");
 const { renewedToken } = require("../utils/token");
 const { isExpoPushToken } = require("../utils/notify");
+const { profileFieldsError } = require("../utils/profileFields");
+const multer = require("multer");
+const { AVATAR_MAX_BYTES, saveAvatar, removeAvatar } = require("../utils/uploads");
 
 const router = express.Router();
 router.use(requireAuth);
@@ -31,11 +34,19 @@ router.get("/", wrap(async (req, res) => {
   });
 }));
 
-// PATCH /api/me  { name?, avatarUrl? }  -- đổi số điện thoại nên xử lý riêng vì cần unique-check
+// PATCH /api/me  { name?, email?, gender?, emergencyContact?, healthNotes?, goals? }
+// Đổi số điện thoại/role/isActive KHÔNG qua đây (phone cần unique-check; role/isActive là việc của quầy — H5).
+// her-59: khách tự ghi sức khỏe/mục tiêu/khẩn cấp; mọi role tự sửa email/giới tính.
+// her-61: avatarUrl KHÔNG nhận qua đây nữa — ảnh chỉ vào qua POST /me/avatar (chặn ghi URL tuỳ ý).
 router.patch("/", wrap(async (req, res) => {
-  const { name, avatarUrl } = req.body;
-  if (name !== undefined) req.user.name = name;
-  if (avatarUrl !== undefined) req.user.avatarUrl = avatarUrl;
+  const { name } = req.body;
+  if (name !== undefined && (typeof name !== "string" || !name.trim())) {
+    return res.status(400).json({ error: "Họ tên không được để trống" });
+  }
+  const profile = profileFieldsError(req.body);
+  if (profile.error) return res.status(400).json({ error: profile.error });
+  Object.assign(req.user, profile.set);
+  if (name !== undefined) req.user.name = name.trim();
   await req.user.save();
 
   // Tài khoản có hồ sơ HLV (role trainer HOẶC admin kiêm HLV — review her-11 N4) tự đổi tên
@@ -44,6 +55,39 @@ router.patch("/", wrap(async (req, res) => {
     await Trainer.updateOne({ _id: req.user.trainerId }, { $set: { name: req.user.name } });
   }
 
+  res.json({ user: req.user.toPublicJSON() });
+}));
+
+// POST /api/me/avatar — her-61 (04/09/2026): multipart field "avatar" (JPG/PNG, ≤ 10 MB) -> ghi file
+// uploads/avatars/<userId>.<ext>, avatarUrl = đường dẫn tương đối kèm ?v= để app bỏ cache ảnh cũ.
+// Chỉ đổi ảnh CỦA MÌNH (mọi vai trò); chưa có đổi hộ. Lỗi multer (quá cỡ, sai field) -> 400 JSON tiếng Việt (C4).
+const avatarUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: AVATAR_MAX_BYTES, files: 1 } }).single("avatar");
+router.post("/avatar", (req, res, next) => {
+  avatarUpload(req, res, (err) => {
+    if (!err) return next();
+    if (err.code === "LIMIT_FILE_SIZE") return res.status(400).json({ error: "Ảnh quá lớn — tối đa 10 MB" });
+    if (err.code === "LIMIT_UNEXPECTED_FILE") return res.status(400).json({ error: 'Gửi ảnh trong trường "avatar"' });
+    return res.status(400).json({ error: "Không đọc được ảnh gửi lên" });
+  });
+}, wrap(async (req, res) => {
+  if (!req.file || !req.file.buffer?.length) return res.status(400).json({ error: 'Chưa chọn ảnh (trường "avatar")' });
+  let url;
+  try {
+    url = await saveAvatar(req.user._id, req.file.buffer);
+  } catch (e) {
+    if (e.message === "Ảnh phải là JPG hoặc PNG") return res.status(400).json({ error: e.message });
+    throw e;
+  }
+  req.user.avatarUrl = url;
+  await req.user.save();
+  res.json({ user: req.user.toPublicJSON() });
+}));
+
+// DELETE /api/me/avatar — gỡ ảnh, về chữ cái đầu tên
+router.delete("/avatar", wrap(async (req, res) => {
+  await removeAvatar(req.user._id);
+  req.user.avatarUrl = null;
+  await req.user.save();
   res.json({ user: req.user.toPublicJSON() });
 }));
 

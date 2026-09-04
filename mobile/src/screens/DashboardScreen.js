@@ -10,9 +10,6 @@ import TimeRow from "../components/TimeRow";
 import AppButton from "../components/AppButton";
 import RosterSheet from "../components/RosterSheet";
 import MonthPickerSheet from "../components/MonthPickerSheet";
-import NotificationsModal from "./NotificationsModal";
-import NotificationBell from "../components/NotificationBell";
-import { onPushReceived } from "../utils/push";
 import { useAuth } from "../context/AuthContext";
 import { api } from "../api/client";
 import { useTheme } from "../theme";
@@ -40,20 +37,7 @@ export default function DashboardScreen() {
   const [repMonth, setRepMonth] = useState(() => { const d = new Date(); return { y: d.getFullYear(), m: d.getMonth() + 1 }; });
   const repMonthRef = useRef(null);
   const loadSeq = useRef(0);
-  // her-57: chuông thông báo (khách đặt/hủy lịch) — số chưa đọc tải khi vào tab, khi có push tới,
-  // và sau khi đóng danh sách (mở danh sách = đã xem hết)
-  const [unread, setUnread] = useState(0);
-  const [notifOpen, setNotifOpen] = useState(false);
-  const loadUnread = useCallback(async () => {
-    try {
-      const r = await api.get("/notifications/unread-count");
-      setUnread(r.unread || 0);
-    } catch (err) {
-      // Không có mạng thì giữ số cũ — chuông không phải chỗ hiện lỗi mạng (màn đã có errorMsg riêng)
-    }
-  }, []);
-  useEffect(() => onPushReceived(() => loadUnread()), [loadUnread]);
-  useFocusEffect(useCallback(() => { loadUnread(); }, [loadUnread]));
+  // her-57 chuông thông báo: từ 04/09 nằm sẵn trong TopBar/HeaderBlock (HeaderBell) — mọi màn đều có
   const [rosterClassId, setRosterClassId] = useState(null); // HLV bấm "Điểm danh lớp" từ Buổi kế tiếp
   const [monthSheet, setMonthSheet] = useState(false); // her-46: sheet chọn tháng báo cáo
 
@@ -138,17 +122,14 @@ export default function DashboardScreen() {
             title="Tổng quan"
             sub="Báo cáo thu – chi theo tháng · Admin"
             right={
-              <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
-                <NotificationBell unread={unread} onPress={() => setNotifOpen(true)} />
-                <TouchableOpacity
-                  activeOpacity={0.7}
-                  onPress={() => setMonthSheet(true)}
-                  style={[styles.repPill, { borderColor: c.accent }]}
-                >
-                  <Text style={[styles.repMonthText, { color: c.ink }]}>{`T${repMonth.m}/${repMonth.y}`}</Text>
-                  <Feather name="chevron-down" size={13} color={c.accent} />
-                </TouchableOpacity>
-              </View>
+              <TouchableOpacity
+                activeOpacity={0.7}
+                onPress={() => setMonthSheet(true)}
+                style={[styles.repPill, { borderColor: c.accent }]}
+              >
+                <Text style={[styles.repMonthText, { color: c.ink }]}>{`T${repMonth.m}/${repMonth.y}`}</Text>
+                <Feather name="chevron-down" size={13} color={c.accent} />
+              </TouchableOpacity>
             }
           />
         </>
@@ -156,7 +137,6 @@ export default function DashboardScreen() {
 
       {isTrainer && (
         <HeaderBlock
-          right={<NotificationBell light unread={unread} onPress={() => setNotifOpen(true)} />}
           eyebrow={`${user?.name || "HLV"} · Huấn luyện viên`}
           title={`${data?.todayCount ?? 0} buổi dạy hôm nay`}
           stats={[
@@ -169,7 +149,6 @@ export default function DashboardScreen() {
 
       {!isAdmin && !isTrainer && (
         <HeaderBlock
-          right={<NotificationBell light unread={unread} onPress={() => setNotifOpen(true)} />}
           eyebrow={`Lễ tân · ${user?.name || ""}`}
           title={`Hôm nay, ${todayLabel}`}
           stats={[
@@ -382,7 +361,6 @@ export default function DashboardScreen() {
         />
       )}
     </ScrollView>
-    {notifOpen && <NotificationsModal onClose={() => { setNotifOpen(false); loadUnread(); }} />}
     </>
   );
 }

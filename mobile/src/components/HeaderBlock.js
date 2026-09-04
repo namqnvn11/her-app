@@ -1,18 +1,23 @@
 import { View, Text, StyleSheet } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTheme, COLORS } from "../theme";
+import HeaderBell from "./HeaderBell";
 
 // Khối header terracotta: dòng nhỏ + tiêu đề + hàng số liệu ({ value, label })
 // footnote: dòng chữ nhỏ dưới cùng (vd "Pilates 24 buổi · đã dùng 11/24")
-// right (her-57): điều khiển góc phải trên (vd chuông thông báo) — nằm trong vùng an toàn
+// right (her-57): điều khiển góc phải trên — nằm trong vùng an toàn. 04/09: chuông thông báo gắn SẴN
+// (HeaderBell tự ẩn với khách), `right` chỉ còn cho điều khiển thêm.
 export default function HeaderBlock({ eyebrow, title, stats = [], progress, footnote, right }) {
   const insets = useSafeAreaInsets();
   const { c } = useTheme();
   return (
     <View style={[styles.wrap, { backgroundColor: c.primary, paddingTop: 14 + insets.top }]}>
-      {!!right && <View style={[styles.right, { top: 10 + insets.top }]}>{right}</View>}
-      {!!eyebrow && <Text style={[styles.eyebrow, !!right && styles.withRight]}>{eyebrow}</Text>}
-      <Text style={[styles.title, !!right && styles.withRight]}>{title}</Text>
+      <View style={[styles.right, { top: 10 + insets.top }]}>
+        {!!right && right}
+        <HeaderBell light />
+      </View>
+      {!!eyebrow && <Text style={[styles.eyebrow, styles.withRight]}>{eyebrow}</Text>}
+      <Text style={[styles.title, styles.withRight]}>{title}</Text>
       {stats.length > 0 && (
         <View style={styles.stats}>
           {stats.map((s) => (
@@ -35,7 +40,7 @@ export default function HeaderBlock({ eyebrow, title, stats = [], progress, foot
 
 const styles = StyleSheet.create({
   wrap: { paddingHorizontal: 22, paddingBottom: 18 },
-  right: { position: "absolute", right: 18, zIndex: 1 },
+  right: { position: "absolute", right: 18, zIndex: 1, flexDirection: "row", alignItems: "center", gap: 10 },
   withRight: { paddingRight: 44 }, // không chạy chữ dưới chuông (review #9)
   eyebrow: { color: COLORS.primaryOnSoft, fontSize: 12, fontWeight: "500" },
   title: { color: COLORS.primaryOn, fontSize: 21, fontWeight: "800", marginTop: 2 },

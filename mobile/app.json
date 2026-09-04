@@ -2,7 +2,7 @@
   "expo": {
     "name": "HER - Pilates",
     "slug": "her-app",
-    "version": "1.0.3",
+    "version": "1.0.4",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -42,7 +42,14 @@
     "owner": "namqnvn11",
     "plugins": [
       "expo-font",
-      "expo-notifications"
+      "expo-notifications",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "HER cần truy cập thư viện ảnh để bạn chọn ảnh đại diện.",
+          "cameraPermission": "HER cần dùng máy ảnh để bạn chụp ảnh đại diện."
+        }
+      ]
     ],
     "runtimeVersion": {
       "policy": "appVersion"

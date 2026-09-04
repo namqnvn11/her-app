@@ -10,6 +10,7 @@ const { isValidPhone, isValidPassword, MIN_PASSWORD_LENGTH } = require("../utils
 const wrap = require("../utils/asyncHandler");
 const { isValidClassType, labelOf } = require("../utils/disciplines");
 const { debtCustomers, expiringPackages } = require("../utils/customerFlags");
+const { profileFieldsError } = require("../utils/profileFields");
 
 const router = express.Router();
 // Phân quyền 3 tầng:
@@ -95,6 +96,9 @@ router.post("/", wrap(async (req, res) => {
   // SĐT của tài khoản ĐÃ XOÁ được dùng lại (her-53) — index unique cũng chỉ áp cho bản chưa xoá
   const existing = await User.findOne({ phone: phone.trim(), deletedAt: null });
   if (existing) return res.status(409).json({ error: "Số điện thoại đã được đăng ký" });
+  // her-59: email/giới tính/khẩn cấp/sức khỏe/mục tiêu — không bắt buộc, validate chung với PATCH & /me
+  const profile = profileFieldsError(req.body);
+  if (profile.error) return res.status(400).json({ error: profile.error });
 
   const passwordHash = await bcrypt.hash(password, 10);
   let trainerId = null;
@@ -126,6 +130,7 @@ router.post("/", wrap(async (req, res) => {
       role,
       trainerId,
       createdBy: req.user._id,
+      ...profile.set,
     });
   } catch (err) {
     // Tạo user thất bại (vd 2 request song song trùng SĐT) -> dọn hồ sơ Trainer vừa tạo,
@@ -138,7 +143,7 @@ router.post("/", wrap(async (req, res) => {
   res.status(201).json({ account: user.toPublicJSON() });
 }));
 
-// PATCH /api/accounts/:id  { name?, isActive?, password? }
+// PATCH /api/accounts/:id  { name?, isActive?, password?, email?, gender?, emergencyContact?, healthNotes?, goals? }
 router.patch("/:id", wrap(async (req, res) => {
   const target = await User.findById(req.params.id);
   // Đã xoá mềm = coi như không còn (her-53) — không khoá/mở/cấp mật khẩu cho tài khoản đã xoá
@@ -152,7 +157,14 @@ router.patch("/:id", wrap(async (req, res) => {
   if (password != null && !isValidPassword(password)) {
     return res.status(400).json({ error: `Mật khẩu tối thiểu ${MIN_PASSWORD_LENGTH} ký tự` });
   }
-  if (name !== undefined) target.name = name;
+  if (name !== undefined && (typeof name !== "string" || !name.trim())) {
+    return res.status(400).json({ error: "Họ tên không được để trống" });
+  }
+  // her-59: trường hồ sơ mở rộng (chỉ trường có gửi)
+  const profile = profileFieldsError(req.body);
+  if (profile.error) return res.status(400).json({ error: profile.error });
+  Object.assign(target, profile.set);
+  if (name !== undefined) target.name = name.trim();
   if (isActive !== undefined) target.isActive = isActive;
   if (password) {
     target.passwordHash = await bcrypt.hash(password, 10);

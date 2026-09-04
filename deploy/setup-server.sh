@@ -48,8 +48,8 @@ sudo ln -sf /etc/nginx/sites-available/her /etc/nginx/sites-enabled/her
 sudo rm -f /etc/nginx/sites-enabled/default
 sudo nginx -t && sudo systemctl reload nginx
 
-echo "== 8/8 Thư mục sao lưu + cron mỗi đêm 02:30"
-mkdir -p "$HOME/backups"
+echo "== 8/8 Thư mục ảnh upload (her-61) + sao lưu + cron mỗi đêm 02:30"
+mkdir -p "$HOME/her-uploads/avatars" "$HOME/backups"
 ( crontab -l 2>/dev/null | grep -v backup-mongo.sh; echo "30 2 * * * bash $APP_DIR/deploy/backup-mongo.sh >> $HOME/backups/backup.log 2>&1" ) | crontab -
 
 echo

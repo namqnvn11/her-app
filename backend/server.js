@@ -6,6 +6,7 @@ const connectDB = require("./src/config/db");
 const Booking = require("./src/models/Booking");
 const User = require("./src/models/User");
 const { startCompleteSweep } = require("./src/utils/completeSweep");
+const { UPLOAD_DIR, ensureUploadDirs } = require("./src/utils/uploads");
 
 const authRoutes = require("./src/routes/auth.routes");
 const meRoutes = require("./src/routes/me.routes");
@@ -29,6 +30,10 @@ const app = express();
 // phát ETag, Android (okhttp) gửi lại If-None-Match → server trả 304 thân rỗng → app trắng
 // (Tổng quan/Lịch tập/Tài khoản); iOS tự lấy cache nên không lộ. Xem test/no-cache.test.js.
 app.set("etag", false);
+// her-61: ảnh đại diện — file tĩnh, ĐƯỢC cache (URL có ?v= đổi khi thay ảnh) nên đặt TRƯỚC no-store.
+// Production nginx phát thẳng thư mục này (nginx-her.conf) — khối này lo cho dev/test.
+ensureUploadDirs();
+app.use("/uploads", express.static(UPLOAD_DIR, { maxAge: "7d", etag: false, index: false, dotfiles: "deny" }));
 app.use((req, res, next) => { res.set("Cache-Control", "no-store"); next(); });
 app.use(cors());
 app.use(express.json());

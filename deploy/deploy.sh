@@ -17,6 +17,9 @@ main() {
   echo "== Backend"
   cd "$APP_DIR/backend"
   [ -f .env ] || { echo "THIẾU backend/.env — xem hướng dẫn bước 4"; exit 1; }
+  # her-61: thư mục ảnh đại diện NGOÀI thư mục code + biến UPLOAD_DIR trong .env (chỉ thêm khi chưa có)
+  mkdir -p "$HOME/her-uploads/avatars"
+  grep -q '^UPLOAD_DIR=' .env || printf '\n# her-61: thư mục ảnh đại diện (nginx phát thẳng /uploads/)\nUPLOAD_DIR=%s/her-uploads\n' "$HOME" >> .env
   npm ci --omit=dev
   echo "== Migration (cập nhật DB theo code mới — mỗi file chỉ chạy 1 lần)"
   npm run migrate
@@ -30,6 +33,17 @@ main() {
     rm -rf dist
     npx expo export --platform web
     rsync -a --delete dist/ /var/www/her/
+  fi
+
+  echo "== nginx: khối /uploads/ cho ảnh đại diện (her-61) — chỉ chèn khi chưa có"
+  NGX=/etc/nginx/sites-available/her
+  if [ -f "$NGX" ] && ! grep -q 'nginx-uploads.inc' "$NGX"; then
+    sudo cp "$NGX" "$NGX.bak-$(date +%Y%m%d%H%M%S)"
+    # Chèn include vào MỌI khối server (cả khối 443 certbot tự tạo) — ngay sau dòng server_name
+    sudo sed -i "s|^\(\s*\)server_name \(.*\);|\1server_name \2;\n\1include $APP_DIR/deploy/nginx-uploads.inc;|" "$NGX"
+    sudo sed -i 's|client_max_body_size 5m;|client_max_body_size 12m;|' "$NGX"
+    if sudo nginx -t; then sudo systemctl reload nginx; echo "nginx: đã thêm /uploads/ + 12m";
+    else echo "nginx -t LỖI — khôi phục bản cũ"; sudo cp "$(ls -t "$NGX".bak-* | head -1)" "$NGX"; sudo nginx -t; fi
   fi
 
   echo "== Trang chính sách quyền riêng tư (store yêu cầu)"

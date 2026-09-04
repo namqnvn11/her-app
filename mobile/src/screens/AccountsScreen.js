@@ -8,9 +8,12 @@ import AppButton from "../components/AppButton";
 import SectionLabel from "../components/SectionLabel";
 import FormSheet from "../components/FormSheet";
 import CustomerPackagesModal from "./CustomerPackagesModal";
+import SoldPackagesModal from "./SoldPackagesModal"; // her-60
 import ConfirmSheet from "../components/ConfirmSheet";
 import * as Clipboard from "expo-clipboard";
 import MoneyInput from "../components/MoneyInput";
+import Avatar from "../components/Avatar"; // her-61
+import ProfileFields, { EMPTY_PROFILE, GENDER_LABEL, profileFromUser, profileToBody } from "../components/ProfileFields";
 import { api } from "../api/client";
 import { useAuth } from "../context/AuthContext";
 import { useTheme } from "../theme";
@@ -79,6 +82,7 @@ export default function AccountsScreen() {
   const [confirmAction, setConfirmAction] = useState(null);
   const [copied, setCopied] = useState(false);
   const [pkgCustomer, setPkgCustomer] = useState(null); // mở màn Gói tập của 1 học viên
+  const [soldOpen, setSoldOpen] = useState(false); // her-60: lịch sử gói bán (admin + lễ tân)
   // Mục 7: admin thiết lập thù lao HLV — sheet riêng, lưu = tạo BẢN GHI MỨC MỚI (áp từ hôm nay)
   const [paySheet, setPaySheet] = useState(null); // account đang chỉnh
   const [payForm, setPayForm] = useState(EMPTY_PAY_FORM);
@@ -91,6 +95,14 @@ export default function AccountsScreen() {
   const [sheetError, setSheetError] = useState("");
   // Không điền sẵn mật khẩu mặc định — người tạo phải tự đặt (tối thiểu 6 ký tự)
   const [form, setForm] = useState({ name: "", phone: "", password: "", specialties: [] });
+  // her-59: hồ sơ mở rộng (email, giới tính, khẩn cấp, sức khỏe, mục tiêu) — học viên đủ nhóm,
+  // HLV/lễ tân chỉ email + giới tính
+  const [profile, setProfile] = useState(EMPTY_PROFILE);
+  // Sheet "Sửa thông tin" cho tài khoản đã có — { acc } | null
+  const [editAcc, setEditAcc] = useState(null);
+  const [editForm, setEditForm] = useState({ name: "" });
+  const [editProfile, setEditProfile] = useState(EMPTY_PROFILE);
+  const [editError, setEditError] = useState("");
   // her-19: chuyên môn HLV = CHỌN từ danh mục bộ môn (không nhập tay)
   const [disciplines, setDisciplines] = useState([]);
   useEffect(() => {
@@ -240,13 +252,46 @@ export default function AccountsScreen() {
         password: form.password,
         role,
         specialties: role === "trainer" ? form.specialties : undefined,
+        ...profileToBody(profile, { full: role === "customer" }),
       });
       flash(`Đã tạo tài khoản ${ROLE_LABEL[role]}`);
       setForm({ name: "", phone: "", password: "", specialties: [] });
+      setProfile(EMPTY_PROFILE);
       setSheetOpen(false);
       load(role, flag);
     } catch (err) {
       setSheetError(err.message); // hiện trong sheet — không để lỗi chìm sau Modal
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // her-59: sửa tên + hồ sơ mở rộng của tài khoản đã có (PATCH /accounts/:id — server kiểm tầng quyền)
+  const openEdit = (acc) => {
+    closeAllSheets();
+    setEditForm({ name: acc.name || "" });
+    setEditProfile(profileFromUser(acc));
+    setEditError("");
+    setEditAcc(acc);
+  };
+  const saveEdit = async () => {
+    if (busy || !editAcc) return;
+    if (!editForm.name.trim()) {
+      setEditError("Vui lòng nhập họ tên");
+      return;
+    }
+    setEditError("");
+    setBusy(true);
+    try {
+      await api.patch(`/accounts/${editAcc.id}`, {
+        name: editForm.name.trim(),
+        ...profileToBody(editProfile, { full: editAcc.role === "customer" }),
+      });
+      flash("Đã lưu thông tin");
+      setEditAcc(null);
+      load(role, flag);
+    } catch (err) {
+      setEditError(err.message); // hiện trong sheet (L8)
     } finally {
       setBusy(false);
     }
@@ -344,7 +389,16 @@ export default function AccountsScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: c.bg }}>
-      <TopBar title="Tài khoản" />
+      <TopBar
+        title="Tài khoản"
+        right={
+          // her-60: mọi gói bán trong tháng ở 1 chỗ — không phải mở từng khách
+          <TouchableOpacity activeOpacity={0.7} onPress={() => { closeAllSheets(); setSoldOpen(true); }} style={[styles.soldPill, { borderColor: c.accent }]}>
+            <Feather name="credit-card" size={13} color={c.accent} />
+            <Text style={[styles.soldPillText, { color: c.ink }]}>Gói đã bán</Text>
+          </TouchableOpacity>
+        }
+      />
 
       <View style={{ paddingHorizontal: 22 }}>
         <View style={[styles.searchBox, { backgroundColor: c.card, borderColor: c.line }]}>
@@ -412,11 +466,7 @@ export default function AccountsScreen() {
                 !a.isActive && { opacity: 0.55 },
               ]}
             >
-              <View style={[styles.avatar, { backgroundColor: c.primaryTint }]}>
-                <Text style={[styles.avatarText, { color: c.accent }]}>
-                  {(a.name || "?").slice(0, 1).toUpperCase()}
-                </Text>
-              </View>
+              <Avatar url={a.avatarUrl} name={a.name} size={40} />
               <View style={{ flex: 1 }}>
                 <Text style={[styles.rowTitle, { color: c.ink }]}>{a.name}</Text>
                 <Text style={[styles.rowMeta, { color: c.inkSoft }]}>
@@ -437,7 +487,23 @@ export default function AccountsScreen() {
             {selectedId === a.id && (
               <View style={[styles.actionCard, { backgroundColor: c.card }]}>
                 <Text style={[styles.actionName, { color: c.ink }]}>{a.name}</Text>
-                <View style={{ flexDirection: "row", gap: 8, marginTop: 10 }}>
+                {/* her-59: xem nhanh hồ sơ mở rộng + nút sửa */}
+                {!!(a.email || a.gender || a.emergencyContact?.phone || a.healthNotes || a.goals) && (
+                  <Text style={[styles.profileMeta, { color: c.inkSoft }]}>
+                    {[
+                      a.gender ? GENDER_LABEL[a.gender] : null,
+                      a.email || null,
+                      a.emergencyContact?.phone ? `khẩn cấp: ${a.emergencyContact.name ? a.emergencyContact.name + " " : ""}${a.emergencyContact.phone}` : null,
+                      a.healthNotes ? `sức khỏe: ${a.healthNotes}` : null,
+                      a.goals ? `mục tiêu: ${a.goals}` : null,
+                    ].filter(Boolean).join(" · ")}
+                  </Text>
+                )}
+                <AppButton variant="outline" style={{ marginTop: 10 }} disabled={busy} onPress={() => openEdit(a)}
+                  icon={<Feather name="edit-2" size={13} color={c.accent} style={{ marginRight: 2 }} />}>
+                  Sửa thông tin
+                </AppButton>
+                <View style={{ flexDirection: "row", gap: 8, marginTop: 8 }}>
                   <View style={{ flex: 1 }}>
                     <AppButton variant="ghost" disabled={busy} onPress={() => { closeAllSheets(); setConfirmAction({ kind: "reset", acc: a }); }}>
                       Cấp lại mật khẩu
@@ -541,6 +607,8 @@ export default function AccountsScreen() {
             </View>
           </>
         )}
+        {/* her-59: hồ sơ mở rộng — học viên đủ nhóm; HLV/lễ tân chỉ email + giới tính */}
+        <ProfileFields value={profile} onChange={setProfile} full={role === "customer"} inputStyle={inputStyle} labelStyle={styles.sheetLabel} />
         <SectionLabel style={styles.sheetLabel}>Mật khẩu ban đầu (tối thiểu 6 ký tự)</SectionLabel>
         <TextInput
           value={form.password}
@@ -554,6 +622,17 @@ export default function AccountsScreen() {
         {!!sheetError && <Text style={[styles.sheetError, { color: c.danger }]}>{sheetError}</Text>}
         <AppButton style={{ marginTop: 22 }} disabled={busy} onPress={create}>
           {busy ? "Đang tạo..." : "Tạo tài khoản"}
+        </AppButton>
+      </FormSheet>
+
+      {/* her-59: sửa tên + hồ sơ mở rộng (SĐT đăng nhập không đổi ở đây) */}
+      <FormSheet visible={!!editAcc} title={`Sửa thông tin — ${editAcc?.name || ""}`} onClose={() => { if (!busy) setEditAcc(null); }}>
+        <SectionLabel style={styles.sheetLabel}>Họ và tên</SectionLabel>
+        <TextInput value={editForm.name} onChangeText={(v) => setEditForm({ name: v })} style={inputStyle} />
+        <ProfileFields value={editProfile} onChange={setEditProfile} full={editAcc?.role === "customer"} inputStyle={inputStyle} labelStyle={styles.sheetLabel} />
+        {!!editError && <Text style={[styles.sheetError, { color: c.danger }]}>{editError}</Text>}
+        <AppButton style={{ marginTop: 22 }} disabled={busy} onPress={saveEdit}>
+          {busy ? "Đang lưu..." : "Lưu"}
         </AppButton>
       </FormSheet>
 
@@ -591,6 +670,7 @@ export default function AccountsScreen() {
       {!!pkgCustomer && (
         <CustomerPackagesModal customer={pkgCustomer} onClose={() => setPkgCustomer(null)} />
       )}
+      {soldOpen && <SoldPackagesModal onClose={() => { setSoldOpen(false); load(role, flag); }} />}
 
       <FormSheet
         visible={!!paySheet}
@@ -665,6 +745,8 @@ const styles = StyleSheet.create({
     marginTop: 12,
   },
   filterChipText: { fontSize: 11.5, fontWeight: "700" },
+  soldPill: { flexDirection: "row", alignItems: "center", gap: 5, borderWidth: 1.5, borderRadius: 999, paddingVertical: 5, paddingHorizontal: 11 },
+  soldPillText: { fontSize: 12, fontWeight: "800" },
   // her-23: ô tìm theo tên/SĐT — cùng kiểu với màn Lịch tập
   searchBox: {
     flexDirection: "row",
@@ -682,8 +764,6 @@ const styles = StyleSheet.create({
   error: { fontSize: 12.5, marginHorizontal: 22, marginTop: 10, fontWeight: "700" },
   empty: { fontSize: 13, marginTop: 18 },
   row: { flexDirection: "row", alignItems: "center", gap: 14, paddingVertical: 13 },
-  avatar: { width: 40, height: 40, borderRadius: 20, alignItems: "center", justifyContent: "center" },
-  avatarText: { fontSize: 15, fontWeight: "800" },
   rowTitle: { fontSize: 13.5, fontWeight: "700" },
   rowMeta: { fontSize: 11.5, marginTop: 2 },
   status: { fontSize: 12, fontWeight: "700" },
@@ -698,6 +778,7 @@ const styles = StyleSheet.create({
     elevation: 3,
   },
   actionName: { fontSize: 13.5, fontWeight: "800" },
+  profileMeta: { fontSize: 11.5, marginTop: 4, lineHeight: 16 },
   resetPw: { fontSize: 15, fontWeight: "900", letterSpacing: 1 },
   resetText: { fontSize: 12.5, fontWeight: "700", marginTop: 12, lineHeight: 18 },
   // FAB chỉ icon "+" — tròn, nhích lên khỏi mép dưới (góp ý 18/08)

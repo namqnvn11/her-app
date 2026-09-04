@@ -513,3 +513,32 @@ test("sold-at-edit: admin đổi ngày bán -> dòng thu dời theo, doanh thu c
   assert.equal(r3.status, 400, JSON.stringify(r3.data));
   assert.match(r3.data.error, /thu nợ/);
 });
+
+// her-58 (04/09/2026): hình thức thanh toán thứ 3 — Cà thẻ (card)
+test("her-58 card-payment: bán gói 'card' -> 201; sửa gói sang 'card' -> 200 (admin); giá trị lạ -> 400 có lý do", async () => {
+  const cust = await makeCustomer();
+  const r = await call("/packages", {
+    method: "POST", token: tokens.reception,
+    body: { userId: cust.id, name: "Goi ca the", serviceTypes: ["pilates"], format: "1:1", price: 500000, totalSessions: 5, paymentMethod: "card" },
+  });
+  assert.equal(r.status, 201, JSON.stringify(r.data));
+  assert.equal(r.data.package.paymentMethod, "card");
+
+  const r2 = await call("/packages", {
+    method: "POST", token: tokens.reception,
+    body: { userId: cust.id, name: "Goi la", serviceTypes: ["pilates"], format: "1:1", price: 500000, totalSessions: 5, paymentMethod: "crypto" },
+  });
+  assert.equal(r2.status, 400);
+  assert.match(r2.data.error, /cà thẻ/i, "lý do phải liệt kê đủ 3 hình thức");
+
+  const r3 = await call("/packages", {
+    method: "POST", token: tokens.reception,
+    body: { userId: cust.id, name: "Goi tm", serviceTypes: ["pilates"], format: "1:1", price: 500000, totalSessions: 5 },
+  });
+  assert.equal(r3.status, 201);
+  const edit = await call(`/packages/${r3.data.package.id}`, { method: "PATCH", token: tokens.admin, body: { paymentMethod: "card" } });
+  assert.equal(edit.status, 200, JSON.stringify(edit.data));
+  assert.equal(edit.data.package.paymentMethod, "card");
+  const list = await call(`/packages/customer/${cust.id}`, { token: tokens.reception });
+  assert.deepEqual(list.data.packages.map((p) => p.paymentMethod).sort(), ["card", "card"]);
+});

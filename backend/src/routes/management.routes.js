@@ -224,7 +224,7 @@ router.get("/classes/:id/roster", wrap(async (req, res) => {
     status: { $in: ["booked", "completed", "no_show"] },
   })
     .sort({ createdAt: 1 })
-    .populate("userId", "name phone");
+    .populate("userId", "name phone email emergencyContact healthNotes goals avatarUrl");
 
   res.json({
     class: {
@@ -236,14 +236,24 @@ router.get("/classes/:id/roster", wrap(async (req, res) => {
       capacity: gymClass.capacity,
       spotsLeft: Math.max(gymClass.capacity - gymClass.bookedCount, 0),
     },
-    // HLV không được xem SĐT khách (quyết định 16/08/2026) — chỉ reception/admin thấy.
+    // HLV không được xem SĐT/email/liên hệ khẩn cấp khách (quyết định 16/08/2026) — chỉ reception/admin thấy.
+    // her-59: sức khỏe + mục tiêu thì MỌI role xem được (HLV cần nắm trước giờ tập).
     // status + attendanceAt để app hiện nút điểm danh và trạng thái Đến/Vắng (her-10)
     customers: bookings.map((b) => ({
       bookingId: b._id,
       name: b.userId?.name || "(đã xoá)",
+      avatarUrl: b.userId?.avatarUrl || null,
       status: b.status,
       attendanceAt: b.attendanceAt,
-      ...(req.user.role !== "trainer" ? { phone: b.userId?.phone || "" } : {}),
+      healthNotes: b.userId?.healthNotes || "",
+      goals: b.userId?.goals || "",
+      ...(req.user.role !== "trainer"
+        ? {
+            phone: b.userId?.phone || "",
+            email: b.userId?.email || null,
+            emergencyContact: { name: b.userId?.emergencyContact?.name || "", phone: b.userId?.emergencyContact?.phone || "" },
+          }
+        : {}),
     })),
   });
 }));

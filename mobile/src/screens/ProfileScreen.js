@@ -1,5 +1,10 @@
 import { useState, useEffect, useCallback } from "react";
-import { View, Text, TextInput, TouchableOpacity, ScrollView, StyleSheet, KeyboardAvoidingView, Modal } from "react-native";
+import { View, Text, TextInput, TouchableOpacity, ScrollView, StyleSheet, KeyboardAvoidingView, Modal, Platform, ActivityIndicator } from "react-native";
+import * as ImagePicker from "expo-image-picker";
+import * as ImageManipulator from "expo-image-manipulator";
+import Avatar from "../components/Avatar";
+import { avatarUri } from "../utils/avatar";
+import { Image } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useFocusEffect } from "@react-navigation/native";
 import { Feather } from "@expo/vector-icons";
@@ -9,6 +14,7 @@ import AppButton from "../components/AppButton";
 import SettingsScreen from "./SettingsScreen";
 import AutoScheduleScreen from "./AutoScheduleScreen";
 import FormSheet from "../components/FormSheet";
+import ProfileFields, { GENDER_LABEL, profileFromUser, profileToBody } from "../components/ProfileFields";
 import { useAuth } from "../context/AuthContext";
 import { api } from "../api/client";
 import { packageLabel } from "../utils/formats";
@@ -27,6 +33,7 @@ export default function ProfileScreen() {
   const { c } = useTheme();
   const insets = useSafeAreaInsets();
   const [name, setName] = useState(user?.name || "");
+  const [profile, setProfile] = useState(profileFromUser(user)); // her-59
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
   // Review her-34 #4: message dùng cho cả lỗi — lỗi phải ra màu đỏ, không phải xanh thành công
@@ -54,6 +61,7 @@ export default function ProfileScreen() {
 
   useEffect(() => {
     setName(user?.name || "");
+    setProfile(profileFromUser(user));
   }, [user]);
 
   const isCustomer = user?.role === "customer";
@@ -69,12 +77,53 @@ export default function ProfileScreen() {
     }, [isCustomer])
   );
 
-  const initials = (user?.name || "??")
-    .split(" ")
-    .slice(-2)
-    .map((w) => w[0])
-    .join("")
-    .toUpperCase();
+  // her-61 (04/09/2026): ảnh đại diện — chọn từ thư viện, cắt vuông, THU NHỎ NGAY TRÊN MÁY về 512px
+  // (ảnh gốc 3–8 MB -> ~50–100 KB) rồi mới gửi; server ghi file, trả avatarUrl mới -> refreshMe.
+  const [avatarBusy, setAvatarBusy] = useState(false);
+  const notice = (text, isErr = false) => {
+    setMessageErr(isErr);
+    setMessage(text);
+    setTimeout(() => setMessage(""), isErr ? 3500 : 2000);
+  };
+  const pickAvatar = async () => {
+    if (avatarBusy) return;
+    try {
+      if (Platform.OS !== "web") {
+        const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (!perm.granted) return notice("Chưa cho phép truy cập ảnh — bật quyền Ảnh cho HER trong Cài đặt điện thoại", true);
+      }
+      const picked = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ["images"], allowsEditing: true, aspect: [1, 1], quality: 1 });
+      if (picked.canceled || !picked.assets?.[0]) return;
+      setAvatarBusy(true);
+      const out = await ImageManipulator.manipulateAsync(
+        picked.assets[0].uri,
+        [{ resize: { width: 512 } }],
+        { compress: 0.8, format: ImageManipulator.SaveFormat.JPEG }
+      );
+      let file;
+      if (Platform.OS === "web") {
+        const blob = await (await fetch(out.uri)).blob();
+        file = new File([blob], "avatar.jpg", { type: "image/jpeg" });
+      } else {
+        file = { uri: out.uri, name: "avatar.jpg", type: "image/jpeg" };
+      }
+      await api.upload("/me/avatar", "avatar", file);
+      await refreshMe();
+      notice("Đã cập nhật ảnh đại diện");
+    } catch (err) {
+      notice(err.message, true);
+    } finally {
+      setAvatarBusy(false);
+    }
+  };
+  // Góp ý 04/09: bấm ảnh -> chọn "Xem ảnh" / "Chọn ảnh mới" (không có Gỡ ảnh — muốn đổi thì chọn ảnh khác)
+  const [avatarMenu, setAvatarMenu] = useState(false);
+  const [viewingAvatar, setViewingAvatar] = useState(false);
+  const onAvatarPress = () => {
+    if (avatarBusy) return;
+    if (user?.avatarUrl) setAvatarMenu(true);
+    else pickAvatar();
+  };
 
   const saveTrainerProfile = async () => {
     if (trainerBusy) return;
@@ -120,7 +169,8 @@ export default function ProfileScreen() {
     setSaving(true);
     setMessage("");
     try {
-      await api.patch("/me", { name });
+      // her-59: mọi role tự sửa email/giới tính; khách thêm khẩn cấp/sức khỏe/mục tiêu
+      await api.patch("/me", { name, ...profileToBody(profile, { full: isCustomer }) });
       await refreshMe();
       setMessageErr(false);
       setMessage("Đã lưu thay đổi");
@@ -142,10 +192,14 @@ export default function ProfileScreen() {
 
       <View style={{ paddingHorizontal: 22 }}>
         <View style={[styles.head, { borderBottomColor: c.line }]}>
-          <View style={[styles.avatar, { backgroundColor: c.primaryTint }]}>
-            <Text style={[styles.avatarText, { color: c.accent }]}>{initials}</Text>
-          </View>
-          <View>
+          {/* her-61: bấm vòng tròn để chọn ảnh; đang gửi thì hiện vòng xoay */}
+          <TouchableOpacity onPress={onAvatarPress} activeOpacity={0.7} disabled={avatarBusy} accessibilityLabel="Ảnh đại diện">
+            <Avatar url={user?.avatarUrl} name={user?.name} size={64} initials="two" />
+            <View style={[styles.camBadge, { backgroundColor: c.card, borderColor: c.line }]}>
+              {avatarBusy ? <ActivityIndicator size="small" color={c.accent} /> : <Feather name="camera" size={12} color={c.accent} />}
+            </View>
+          </TouchableOpacity>
+          <View style={{ flex: 1 }}>
             <Text style={[styles.name, { color: c.ink }]}>{user?.name}</Text>
             <Text style={[styles.sub, { color: c.inkSoft }]}>
               {ROLE_LABEL[user?.role] || "Khách hàng"} · {user?.phone}
@@ -194,9 +248,11 @@ export default function ProfileScreen() {
             <TextInput
               value={name}
               onChangeText={setName}
-              style={[styles.input, { borderColor: c.line, color: c.ink, backgroundColor: c.card }]}
+              style={[styles.underInput, { borderBottomColor: c.line, color: c.ink }]}
             />
-            {!!message && <Text style={{ fontSize: 12, color: c.inkSoft, marginBottom: 10 }}>{message}</Text>}
+            <ProfileFields value={profile} onChange={setProfile} full={isCustomer} inputStyle={[styles.underInput, { borderBottomColor: c.line, color: c.ink }]} labelStyle={{ marginTop: 14 }} />
+            {!!message && <Text style={{ fontSize: 12, color: messageErr ? c.danger : c.inkSoft, marginTop: 10, marginBottom: 4 }}>{message}</Text>}
+            <View style={{ height: 14 }} />
             <View style={{ flexDirection: "row", gap: 8 }}>
               <View style={{ flex: 1 }}>
                 <AppButton variant="ghost" onPress={() => setEditing(false)}>
@@ -212,6 +268,34 @@ export default function ProfileScreen() {
           </View>
         ) : (
           <>
+        {/* Góp ý 04/09: hiện ĐỦ thông tin cá nhân ngay ngoài màn (kể cả ô chưa khai — ghi "Chưa có") để tự xem,
+            nhất là khách; nằm dưới Gói của tôi, ngay trên "Sửa thông tin". Ẩn khi đang ở form sửa (khỏi trùng). */}
+        {!editing && (() => {
+          const ec = user?.emergencyContact;
+          const rows = [
+            ["Email", user?.email],
+            ["Giới tính", user?.gender ? GENDER_LABEL[user.gender] : null],
+            ...(isCustomer
+              ? [
+                  ["Liên hệ khẩn cấp", ec?.phone ? `${ec.name ? ec.name + " · " : ""}${ec.phone}` : null],
+                  ["Sức khỏe", user?.healthNotes],
+                  ["Mục tiêu", user?.goals],
+                ]
+              : []),
+          ];
+          return (
+            <>
+              <SectionLabel>Thông tin cá nhân</SectionLabel>
+              {rows.map(([label, value], i) => (
+                <View key={label} style={[styles.infoRow, i !== rows.length - 1 && { borderBottomWidth: 1, borderBottomColor: c.hairline }]}>
+                  <Text style={[styles.infoLabel, { color: c.inkSoft }]}>{label}</Text>
+                  <Text style={[styles.infoValue, { color: value ? c.ink : c.inkSoft }]}>{value || "Chưa có"}</Text>
+                </View>
+              ))}
+            </>
+          );
+        })()}
+
             <SectionLabel>Tài khoản</SectionLabel>
             <TouchableOpacity onPress={() => setEditing(true)} style={[styles.row, { borderBottomColor: c.hairline }]}>
               <Text style={[styles.rowTitle, { color: c.ink }]}>Sửa thông tin</Text>
@@ -263,13 +347,16 @@ export default function ProfileScreen() {
           </>
         )}
 
-        <AppButton
-          style={{ marginTop: 22 }}
-          onPress={logout}
-          icon={<Feather name="log-out" size={14} color={c.primaryOn} style={{ marginRight: 2 }} />}
-        >
-          Đăng xuất
-        </AppButton>
+        {/* Đang sửa thông tin thì ẩn Đăng xuất — nằm sát nút Lưu, dễ bấm nhầm (góp ý 04/09) */}
+        {!editing && (
+          <AppButton
+            style={{ marginTop: 22 }}
+            onPress={logout}
+            icon={<Feather name="log-out" size={14} color={c.primaryOn} style={{ marginRight: 2 }} />}
+          >
+            Đăng xuất
+          </AppButton>
+        )}
       </View>
 
       <FormSheet
@@ -320,6 +407,24 @@ export default function ProfileScreen() {
         </AppButton>
       </FormSheet>
 
+      {/* Ảnh đại diện: chọn xem / đổi */}
+      <FormSheet visible={avatarMenu} title="Ảnh đại diện" onClose={() => setAvatarMenu(false)}>
+        <AppButton variant="outline" style={{ marginTop: 14 }} onPress={() => { setAvatarMenu(false); setViewingAvatar(true); }}
+          icon={<Feather name="eye" size={14} color={c.accent} style={{ marginRight: 2 }} />}>
+          Xem ảnh
+        </AppButton>
+        <AppButton style={{ marginTop: 10 }} onPress={() => { setAvatarMenu(false); pickAvatar(); }}
+          icon={<Feather name="camera" size={14} color={c.primaryOn} style={{ marginRight: 2 }} />}>
+          Chọn ảnh mới
+        </AppButton>
+      </FormSheet>
+      <Modal visible={viewingAvatar} transparent animationType="fade" onRequestClose={() => setViewingAvatar(false)}>
+        <TouchableOpacity activeOpacity={1} onPress={() => setViewingAvatar(false)} style={styles.viewer}>
+          <Image source={{ uri: avatarUri(user?.avatarUrl) }} style={styles.viewerImg} resizeMode="contain" />
+          <Text style={styles.viewerHint}>Chạm để đóng</Text>
+        </TouchableOpacity>
+      </Modal>
+
       {/* Modal toàn màn nằm ngoài SafeAreaView → tự đệm đáy cho thanh điều hướng Android */}
       <Modal visible={settingsOpen} animationType="slide" onRequestClose={() => setSettingsOpen(false)}>
         <View style={{ flex: 1, backgroundColor: c.bg, paddingBottom: insets.bottom }}>
@@ -339,13 +444,18 @@ export default function ProfileScreen() {
 
 const styles = StyleSheet.create({
   head: { flexDirection: "row", alignItems: "center", gap: 14, paddingBottom: 18, borderBottomWidth: 1, marginTop: 6 },
-  avatar: { width: 64, height: 64, borderRadius: 32, alignItems: "center", justifyContent: "center" },
-  avatarText: { fontSize: 22, fontWeight: "800" },
+  viewer: { flex: 1, backgroundColor: "rgba(0,0,0,0.92)", alignItems: "center", justifyContent: "center" },
+  viewerImg: { width: "100%", aspectRatio: 1, maxHeight: "80%" },
+  viewerHint: { color: "#fff", opacity: 0.7, fontSize: 12.5, marginTop: 16 },
+  camBadge: { position: "absolute", right: -2, bottom: -2, width: 24, height: 24, borderRadius: 12, borderWidth: 1, alignItems: "center", justifyContent: "center" },
   name: { fontSize: 16, fontWeight: "800" },
   sub: { fontSize: 12, marginTop: 2 },
   row: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingVertical: 14, borderBottomWidth: 1 },
   rowTitle: { fontSize: 13, fontWeight: "700" },
   pkgRow: { flexDirection: "row", alignItems: "center", paddingVertical: 13, borderBottomWidth: 1 },
+  infoRow: { flexDirection: "row", alignItems: "flex-start", gap: 12, paddingVertical: 10 },
+  infoLabel: { fontSize: 12, fontWeight: "700", width: 118 },
+  infoValue: { fontSize: 13, flex: 1, lineHeight: 18 },
   pkgSub: { fontSize: 11.5, marginTop: 2 },
   pkgStatus: { fontSize: 12, fontWeight: "800" },
   input: { borderWidth: 1.5, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12, fontSize: 14, marginTop: 6, marginBottom: 12 },
