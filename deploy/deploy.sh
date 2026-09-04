@@ -35,14 +35,20 @@ main() {
     rsync -a --delete dist/ /var/www/her/
   fi
 
-  echo "== nginx: khối /uploads/ cho ảnh đại diện (her-61) — chỉ chèn khi chưa có"
+  echo "== nginx: khối /uploads/ cho ảnh đại diện (her-61)"
+  chmod o+x "$HOME" # www-data cần đi qua /home/ubuntu để đọc ~/her-uploads (home mặc định 750)
   NGX=/etc/nginx/sites-available/her
-  if [ -f "$NGX" ] && ! grep -q 'nginx-uploads.inc' "$NGX"; then
+  INC=/etc/nginx/her-uploads.inc
+  if ! sudo cmp -s "$APP_DIR/deploy/nginx-uploads.inc" "$INC"; then sudo cp "$APP_DIR/deploy/nginx-uploads.inc" "$INC"; NGX_CHANGED=1; fi
+  if [ -f "$NGX" ] && ! grep -q 'her-uploads.inc' "$NGX"; then
     sudo cp "$NGX" "$NGX.bak-$(date +%Y%m%d%H%M%S)"
     # Chèn include vào MỌI khối server (cả khối 443 certbot tự tạo) — ngay sau dòng server_name
-    sudo sed -i "s|^\(\s*\)server_name \(.*\);|\1server_name \2;\n\1include $APP_DIR/deploy/nginx-uploads.inc;|" "$NGX"
+    sudo sed -i "s|^\(\s*\)server_name \(.*\);|\1server_name \2;\n\1include $INC;|" "$NGX"
     sudo sed -i 's|client_max_body_size 5m;|client_max_body_size 12m;|' "$NGX"
-    if sudo nginx -t; then sudo systemctl reload nginx; echo "nginx: đã thêm /uploads/ + 12m";
+    NGX_CHANGED=1
+  fi
+  if [ "${NGX_CHANGED:-}" = 1 ]; then
+    if sudo nginx -t; then sudo systemctl reload nginx; echo "nginx: đã cập nhật /uploads/";
     else echo "nginx -t LỖI — khôi phục bản cũ"; sudo cp "$(ls -t "$NGX".bak-* | head -1)" "$NGX"; sudo nginx -t; fi
   fi
 

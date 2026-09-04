@@ -51,5 +51,15 @@ jobs:
           printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
           ssh-keyscan -H 47.129.162.37 >> ~/.ssh/known_hosts 2>/dev/null
-          ssh -i ~/.ssh/deploy_key ubuntu@47.129.162.37 "bash ~/her-app/deploy/deploy.sh"
-          curl -fsS https://her-studio.duckdns.org/api/health
+          # 04/09/2026: deploy.sh chạy bằng nohup TRÊN máy chủ rồi đọc log — trước đây SSH giữ phiên suốt
+          # `npm ci` (>5 phút) bị "Broken pipe" giữa chừng dù máy chủ vẫn chạy tiếp (CI đỏ oan, các bước sau
+          # của deploy.sh bị bỏ dở). Poll log tới khi thấy XONG./LỖI, tối đa ~9 phút.
+          SSH="ssh -i ~/.ssh/deploy_key -o ServerAliveInterval=30 ubuntu@47.129.162.37"
+          $SSH "rm -f ~/deploy.log; nohup bash ~/her-app/deploy/deploy.sh > ~/deploy.log 2>&1 &"
+          for i in $(seq 1 54); do
+            sleep 10
+            if $SSH "grep -qE '^XONG\.$|LỖI|npm ERR|Error:' ~/deploy.log"; then break; fi
+          done
+          $SSH "cat ~/deploy.log"
+          $SSH "grep -q '^XONG\.$' ~/deploy.log"
+          curl -fsS https://api.her-pilates.com/api/health
